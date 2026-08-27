@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
@@ -155,5 +156,62 @@ func TestListColumnSetItemsPreservesSelection(t *testing.T) {
 	}
 	if col.SelectedMediaItem().ID != "2" {
 		t.Fatalf("expected ID 2, got %s", col.SelectedMediaItem().ID)
+	}
+}
+
+func TestListColumnEpisodeShowTitle(t *testing.T) {
+	ep := &domain.MediaItem{
+		ID:         "ep1",
+		Title:      "Pilot",
+		Type:       domain.MediaTypeEpisode,
+		ShowTitle:  "Breaking Bad",
+		SeasonNum:  1,
+		EpisodeNum: 1,
+	}
+	col := NewListColumn(ColumnTypeEpisodes, "Episodes")
+	col.SetItems([]*domain.MediaItem{ep})
+
+	// Without the flag, only the episode title is shown (with episode code)
+	got := col.renderEpisodeItem(*ep, false, 80)
+	if !strings.Contains(got, "Pilot") || strings.Contains(got, "Breaking Bad") {
+		t.Errorf("expected episode title only without flag, got %q", got)
+	}
+
+	// With the flag, the series name prefixes the episode info
+	col.SetShowShowTitle(true)
+	got = col.renderEpisodeItem(*ep, false, 80)
+	want := "Breaking Bad - S01E01 Pilot"
+	if !strings.Contains(got, want) {
+		t.Errorf("expected rendered line to contain %q, got %q", want, got)
+	}
+}
+
+// TestListColumnContinueWatchingShowTitle reproduces the real runtime path:
+// the Continue Watching column is created as Mixed, SetShowShowTitle(true) is set,
+// then SetItems coerces the column type to Episodes (episode-only list). The
+// dispatched renderer must still show the series name.
+func TestListColumnContinueWatchingShowTitle(t *testing.T) {
+	eps := []*domain.MediaItem{
+		{
+			ID:         "ep1",
+			Title:      "Pilot",
+			Type:       domain.MediaTypeEpisode,
+			ShowTitle:  "Breaking Bad",
+			SeasonNum:  1,
+			EpisodeNum: 1,
+		},
+	}
+	col := NewListColumn(ColumnTypeMixed, "Continue Watching")
+	col.SetShowShowTitle(true)
+	col.SetItems(eps)
+
+	if col.ColumnType() != ColumnTypeEpisodes {
+		t.Fatalf("expected ColumnTypeEpisodes after SetItems (real path), got %v", col.ColumnType())
+	}
+
+	got := col.renderItem(0, false, 80)
+	want := "Breaking Bad - S01E01 Pilot"
+	if !strings.Contains(got, want) {
+		t.Errorf("expected drilled Continue Watching row to contain %q, got %q", want, got)
 	}
 }
