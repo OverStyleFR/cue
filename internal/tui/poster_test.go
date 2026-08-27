@@ -47,7 +47,16 @@ func TestRenderPosterKitty(t *testing.T) {
 		t.Skip("kitty not detected")
 	}
 	out := tui.RenderPoster(makePosterPNG(t), "test", 40)
-	if !bytes.HasPrefix([]byte(out), []byte("\x1b_G")) {
-		t.Fatalf("kitty poster missing escape prefix")
+	if !bytes.Contains([]byte(out), []byte("a=p,U=1")) {
+		t.Fatalf("kitty poster missing virtual placement")
+	}
+	if !bytes.Contains([]byte(out), []byte("\x1b[38;2;")) {
+		t.Fatalf("kitty poster missing image ID color")
+	}
+	if !bytes.Contains([]byte(out), []byte("\U0010EEEE")) {
+		t.Fatalf("kitty poster missing placeholders")
+	}
+	if !bytes.Contains([]byte(out), []byte("\u0305")) {
+		t.Fatalf("kitty poster missing row/column diacritics")
 	}
 }

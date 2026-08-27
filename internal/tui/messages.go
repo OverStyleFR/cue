@@ -198,10 +198,7 @@ type RefreshCurrentMsg struct {
 // PosterLoadedMsg carries a rendered poster (ASCII art or kitty image escape
 // sequence) for the item whose ID is set.
 type PosterLoadedMsg struct {
-	ItemID      string
-	Content     string
-	Placement   string // kitty placement escape; empty in ASCII mode
-	ImageID     uint32
-	WidthCells  int
-	HeightCells int
+	ItemID    string
+	Content   string
+	Placement string // kitty placement escape; empty in ASCII mode
 }

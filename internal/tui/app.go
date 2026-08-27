@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -167,13 +168,10 @@ type Model struct {
 	// for posterItemID. It is re-applied to the active column's inspector on
 	// every render, since the inspector clears its poster when SetItem is called.
 	posterContent string
-	// posterPlacement is the kitty placement escape emitted once when a kitty
-	// image is first shown; posterContent then only contains placeholders.
+	// posterPlacement is the virtual kitty placement prepended to the
+	// placeholder cells whenever the poster is rendered.
 	posterPlacement string
-	// posterImageID/WidthCells/HeightCells are kitty placement metadata.
-	posterImageID     uint32
-	posterWidthCells  int
-	posterHeightCells int
+	posterOutput    io.Writer
 }
 
 // NewModel creates a new application model
@@ -207,6 +205,12 @@ func NewModel(
 		LibraryStates:   make(map[string]components.LibrarySyncState),
 		ShowInspector:   true, // Library list (Tab 1) shows horizontal inspector by default
 	}
+}
+
+// SetOutput configures the synchronized terminal writer used for Kitty image
+// uploads. Bubble Tea should be configured with the same writer.
+func (m *Model) SetOutput(w io.Writer) {
+	m.posterOutput = w
 }
 
 // Init initializes the application
@@ -650,9 +654,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.ItemID == m.posterItemID {
 			m.posterContent = msg.Content
 			m.posterPlacement = msg.Placement
-			m.posterImageID = msg.ImageID
-			m.posterWidthCells = msg.WidthCells
-			m.posterHeightCells = msg.HeightCells
 		}
 		return m, nil
 
@@ -935,7 +936,7 @@ func (m *Model) updateInspector() tea.Cmd {
 						width = posterMinWidth
 					}
 					m.posterItemID = id
-					return FetchPosterCmd(m.MediaClient, id, url, width)
+					return FetchPosterCmd(m.MediaClient, m.posterOutput, id, url, width)
 				}
 			}
 		}

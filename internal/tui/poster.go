@@ -8,15 +8,17 @@ import (
 	"hash/fnv"
 	"image"
 	_ "image/jpeg"
-	_ "image/png"
 	"image/png"
+	_ "image/png"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
 	"github.com/SuperCoolPencil/cue/internal/mediaserver"
-	gopixels "github.com/saran13raj/go-pixels"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi/kitty"
+	gopixels "github.com/saran13raj/go-pixels"
 )
 
 const (
@@ -74,7 +76,7 @@ func RenderPoster(data []byte, itemID string, widthCells int) string {
 			// Transmit the pixels once. The placement (returned below) is
 			// re-emitted on each frame, keeping the image visible.
 			os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
-			return kittyPlacement(imageID, w, h)
+			return kittyPlacement(imageID, w, h) + kittyPlaceholders(imageID, w, h)
 		}
 	}
 	s, err := renderASCII(data, widthCells)
@@ -176,8 +178,10 @@ func kittyTransmit(pngBytes []byte, imageID uint32) string {
 
 		sb.WriteString("\x1b_G")
 		if first {
-			fmt.Fprintf(&sb, "a=t,f=100,i=%d", imageID)
+			fmt.Fprintf(&sb, "a=t,f=100,i=%d,q=2", imageID)
 			first = false
+		} else {
+			sb.WriteString("q=2")
 		}
 		if last {
 			sb.WriteString(",m=0")
@@ -191,34 +195,47 @@ func kittyTransmit(pngBytes []byte, imageID uint32) string {
 	return sb.String()
 }
 
-// kittyPlacement returns the kitty graphics protocol escape sequence that
-// places an already-transmitted image at the current cursor position.
+// kittyPlacement returns a virtual kitty placement. The image is displayed
+// when the host emits matching placeholders for its cells.
 func kittyPlacement(imageID uint32, widthCells, heightCells int) string {
 	var sb strings.Builder
 	sb.WriteString("\x1b_G")
-	fmt.Fprintf(&sb, "a=p,i=%d,c=%d,r=%d,C=1", imageID, widthCells, heightCells)
+	fmt.Fprintf(&sb, "a=p,U=1,i=%d,c=%d,r=%d,q=2", imageID, widthCells, heightCells)
 	sb.WriteString("\x1b\\")
 	return sb.String()
 }
 
-// kittyPlaceholders returns just the Unicode placeholder characters that fill
-// the cells of a kitty image placement. Bubble Tea re-emits these on every
-// render so the image survives redraws without re-uploading pixels.
-func kittyPlaceholders(widthCells, heightCells int) string {
+// kittyPlaceholders identifies each cell of a virtual kitty placement. Kitty
+// uses the foreground color for the low 24 image-ID bits and combining
+// diacritics for the row, column, and optional high ID byte.
+func kittyPlaceholders(imageID uint32, widthCells, heightCells int) string {
 	var sb strings.Builder
-	const placeholder = "\U0010EEEE"
-	for i := 0; i < heightCells; i++ {
-		sb.WriteString(strings.Repeat(placeholder, widthCells))
-		if i < heightCells-1 {
+	red := byte(imageID >> 16)
+	green := byte(imageID >> 8)
+	blue := byte(imageID)
+	highByte := int(imageID >> 24)
+
+	fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm", red, green, blue)
+	for row := 0; row < heightCells; row++ {
+		for col := 0; col < widthCells; col++ {
+			sb.WriteRune(kitty.Placeholder)
+			sb.WriteRune(kitty.Diacritic(row))
+			sb.WriteRune(kitty.Diacritic(col))
+			if highByte != 0 {
+				sb.WriteRune(kitty.Diacritic(highByte))
+			}
+		}
+		if row < heightCells-1 {
 			sb.WriteString("\n")
 		}
 	}
+	sb.WriteString("\x1b[39m")
 	return sb.String()
 }
 
 // FetchPosterCmd returns a command that downloads and renders the poster for
 // the given item, emitting a PosterLoadedMsg on success.
-func FetchPosterCmd(client mediaserver.MediaSource, itemID, url string, widthCells int) tea.Cmd {
+func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, itemID, url string, widthCells int) tea.Cmd {
 	if url == "" {
 		return nil
 	}
@@ -234,20 +251,22 @@ func FetchPosterCmd(client mediaserver.MediaSource, itemID, url string, widthCel
 				// Transmit the pixels once. The placement + placeholders are
 				// rendered in the View; on subsequent frames only placeholders
 				// are re-emitted to keep the image visible without re-upload.
-				os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
+				if output == nil {
+					output = os.Stdout
+				}
+				if _, err := io.WriteString(output, kittyTransmit(pngBytes, imageID)); err != nil {
+					return nil
+				}
 				return PosterLoadedMsg{
-					ItemID:      itemID,
-					Content:     kittyPlaceholders(w, h),
-					Placement:   kittyPlacement(imageID, w, h),
-					ImageID:     imageID,
-					WidthCells:  w,
-					HeightCells: h,
+					ItemID:    itemID,
+					Content:   kittyPlaceholders(imageID, w, h),
+					Placement: kittyPlacement(imageID, w, h),
 				}
 			}
 		}
 
-		content := RenderPoster(data, itemID, widthCells)
-		if content == "" {
+		content, err := renderASCII(data, widthCells)
+		if err != nil || content == "" {
 			return nil
 		}
 		return PosterLoadedMsg{ItemID: itemID, Content: content}

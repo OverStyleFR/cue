@@ -10,11 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// kittyPlacedPosterID tracks which poster item currently has its kitty
-// placement emitted. The placement is emitted once; only the placeholders are
-// re-emitted on subsequent renders.
-var kittyPlacedPosterID string
-
 // RenderSpinner renders a loading spinner
 func RenderSpinner(frame int) string {
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -238,15 +233,7 @@ func (m Model) renderSplitColumn(col *components.ListColumn, colWidth, listHeigh
 	// Re-apply the fetched poster to this column's inspector (SetItem clears it).
 	if selected != nil {
 		if li, ok := selected.(domain.ListItem); ok && li.GetID() == m.posterItemID && m.posterContent != "" {
-			content := m.posterContent
-			// In kitty mode the placement escape is emitted once; subsequent
-			// renders only re-emit the placeholders so the image stays visible
-			// without re-uploading pixels.
-			if m.posterPlacement != "" && kittyPlacedPosterID != m.posterItemID {
-				content = m.posterPlacement + content
-				kittyPlacedPosterID = m.posterItemID
-			}
-			insp.SetPoster(content)
+			insp.SetPoster(m.posterPlacement + m.posterContent)
 		}
 	}
 	infoView := insp.View()
