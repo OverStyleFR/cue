@@ -63,10 +63,18 @@ func PosterURL(item interface{}) string {
 
 // RenderPoster converts raw image bytes into a terminal-renderable string,
 // preferring the kitty image protocol when supported, otherwise ASCII art.
+//
+// In kitty mode the image pixels are transmitted once directly to stdout and
+// a placement string with Unicode placeholders is returned. Bubble Tea re-emits
+// the placement on every render, so the image survives redraws.
 func RenderPoster(data []byte, itemID string, widthCells int) string {
 	if SupportsKittyImage() {
-		if s, err := renderKitty(data, itemID, widthCells); err == nil {
-			return s
+		pngBytes, imageID, w, h, err := renderKitty(data, itemID, widthCells)
+		if err == nil {
+			// Transmit the pixels once. The placement (returned below) is
+			// re-emitted on each frame, keeping the image visible.
+			os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
+			return kittyPlacement(imageID, w, h)
 		}
 	}
 	s, err := renderASCII(data, widthCells)
@@ -85,14 +93,16 @@ func renderASCII(data []byte, widthCells int) (string, error) {
 	return gopixels.FromImageStream(img, widthCells, 0, "halfcell", true)
 }
 
-func renderKitty(data []byte, itemID string, widthCells int) (string, error) {
+// renderKitty decodes and resizes the image for kitty transmission and
+// returns the PNG bytes plus the display dimensions in cells.
+func renderKitty(data []byte, itemID string, widthCells int) (pngBytes []byte, imageID uint32, wCells, hCells int, err error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return "", err
+		return nil, 0, 0, 0, err
 	}
 	b := img.Bounds()
 	if b.Dx() <= 0 || b.Dy() <= 0 {
-		return "", fmt.Errorf("invalid image bounds")
+		return nil, 0, 0, 0, fmt.Errorf("invalid image bounds")
 	}
 	dispW := widthCells * kittyCellWpx
 	dispH := (dispW * b.Dy()) / b.Dx()
@@ -103,14 +113,14 @@ func renderKitty(data []byte, itemID string, widthCells int) (string, error) {
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, resized); err != nil {
-		return "", err
+		return nil, 0, 0, 0, err
 	}
 
 	heightCells := dispH / kittyCellHpx
 	if heightCells < 1 {
 		heightCells = 1
 	}
-	return kittyEscape(buf.Bytes(), kittyImageID(itemID), widthCells, heightCells), nil
+	return buf.Bytes(), kittyImageID(itemID), widthCells, heightCells, nil
 }
 
 // kittyImageID derives a stable numeric image ID for the kitty graphics
@@ -146,16 +156,13 @@ func resizeNearest(img image.Image, w, h int) image.Image {
 	return dst
 }
 
-// kittyEscape builds a kitty graphics protocol payload that transmits the
-// image and places it using Unicode placeholders so it survives Bubble Tea
-// redraws. The returned string is re-emitted on every render; the terminal
-// reuses the transmitted image for each placement.
-func kittyEscape(pngBytes []byte, imageID uint32, widthCells, heightCells int) string {
+// kittyTransmit returns the kitty graphics protocol escape sequence that
+// uploads the image pixels to the terminal. It should be written once.
+func kittyTransmit(pngBytes []byte, imageID uint32) string {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	const chunk = 4096
 	var sb strings.Builder
 
-	// Transmit the image (a=t) so the terminal has the pixels.
 	first := true
 	remaining := b64
 	for len(remaining) > 0 {
@@ -181,9 +188,17 @@ func kittyEscape(pngBytes []byte, imageID uint32, widthCells, heightCells int) s
 		sb.WriteString(part)
 		sb.WriteString("\x1b\\")
 	}
+	return sb.String()
+}
 
-	// Place the image (a=p) and fill its cells with Unicode placeholders so
-	// Bubble Tea redraws preserve the image instead of overwriting it.
+// kittyPlacement returns the kitty graphics protocol escape sequence that
+// places an already-transmitted image and fills its cells with Unicode
+// placeholders. Bubble Tea re-emits this string on every render, so the
+// image survives redraws.
+func kittyPlacement(imageID uint32, widthCells, heightCells int) string {
+	var sb strings.Builder
+
+	// Place the image (a=p) at the current cursor position.
 	sb.WriteString("\x1b_G")
 	fmt.Fprintf(&sb, "a=p,i=%d,c=%d,r=%d,C=1", imageID, widthCells, heightCells)
 	sb.WriteString("\x1b\\")
