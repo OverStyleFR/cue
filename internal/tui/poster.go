@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"hash/fnv"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -30,15 +31,7 @@ const (
 
 // SupportsKittyImage reports whether the terminal likely supports the kitty
 // graphics protocol (used to draw real poster images instead of ASCII art).
-//
-// The kitty graphics protocol is disabled by default: in a scrolling full-screen
-// TUI the image must be re-emitted or use Unicode placeholders on every frame
-// to survive Bubble Tea redraws. ASCII art is reliable everywhere. Users can
-// opt into the experimental kitty protocol with CUE_KITTY_IMAGES=1.
 func SupportsKittyImage() bool {
-	if os.Getenv("CUE_KITTY_IMAGES") != "1" {
-		return false
-	}
 	if os.Getenv("KITTY_WINDOW_ID") != "" {
 		return true
 	}
@@ -70,9 +63,9 @@ func PosterURL(item interface{}) string {
 
 // RenderPoster converts raw image bytes into a terminal-renderable string,
 // preferring the kitty image protocol when supported, otherwise ASCII art.
-func RenderPoster(data []byte, widthCells int) string {
+func RenderPoster(data []byte, itemID string, widthCells int) string {
 	if SupportsKittyImage() {
-		if s, err := renderKitty(data, widthCells); err == nil {
+		if s, err := renderKitty(data, itemID, widthCells); err == nil {
 			return s
 		}
 	}
@@ -92,7 +85,7 @@ func renderASCII(data []byte, widthCells int) (string, error) {
 	return gopixels.FromImageStream(img, widthCells, 0, "halfcell", true)
 }
 
-func renderKitty(data []byte, widthCells int) (string, error) {
+func renderKitty(data []byte, itemID string, widthCells int) (string, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return "", err
@@ -117,7 +110,22 @@ func renderKitty(data []byte, widthCells int) (string, error) {
 	if heightCells < 1 {
 		heightCells = 1
 	}
-	return kittyEscape(buf.Bytes(), dispW, dispH, heightCells), nil
+	return kittyEscape(buf.Bytes(), kittyImageID(itemID), widthCells, heightCells), nil
+}
+
+// kittyImageID derives a stable numeric image ID for the kitty graphics
+// protocol from the item identifier.
+func kittyImageID(itemID string) uint32 {
+	if itemID == "" {
+		return 1
+	}
+	h := fnv.New32a()
+	h.Write([]byte(itemID))
+	id := h.Sum32()
+	if id == 0 {
+		id = 1
+	}
+	return id
 }
 
 // resizeNearest downscales an image to the given pixel dimensions using a
@@ -138,12 +146,16 @@ func resizeNearest(img image.Image, w, h int) image.Image {
 	return dst
 }
 
-// kittyEscape builds a kitty graphics protocol transmission placed at the
-// cursor, followed by blank lines reserving vertical space.
-func kittyEscape(pngBytes []byte, dispW, dispH, heightCells int) string {
+// kittyEscape builds a kitty graphics protocol payload that transmits the
+// image and places it using Unicode placeholders so it survives Bubble Tea
+// redraws. The returned string is re-emitted on every render; the terminal
+// reuses the transmitted image for each placement.
+func kittyEscape(pngBytes []byte, imageID uint32, widthCells, heightCells int) string {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	const chunk = 4096
 	var sb strings.Builder
+
+	// Transmit the image (a=t) so the terminal has the pixels.
 	first := true
 	remaining := b64
 	for len(remaining) > 0 {
@@ -157,11 +169,11 @@ func kittyEscape(pngBytes []byte, dispW, dispH, heightCells int) string {
 
 		sb.WriteString("\x1b_G")
 		if first {
-			fmt.Fprintf(&sb, "f=32,a=T,s=%d,v=%d", dispW, dispH)
+			fmt.Fprintf(&sb, "a=t,f=100,i=%d", imageID)
 			first = false
 		}
 		if last {
-			sb.WriteString(",c=1,m=0")
+			sb.WriteString(",m=0")
 		} else {
 			sb.WriteString(",m=1")
 		}
@@ -169,8 +181,20 @@ func kittyEscape(pngBytes []byte, dispW, dispH, heightCells int) string {
 		sb.WriteString(part)
 		sb.WriteString("\x1b\\")
 	}
-	// Move the cursor below the image so subsequent text doesn't overlap it.
-	sb.WriteString(strings.Repeat("\n", heightCells))
+
+	// Place the image (a=p) and fill its cells with Unicode placeholders so
+	// Bubble Tea redraws preserve the image instead of overwriting it.
+	sb.WriteString("\x1b_G")
+	fmt.Fprintf(&sb, "a=p,i=%d,c=%d,r=%d,C=1", imageID, widthCells, heightCells)
+	sb.WriteString("\x1b\\")
+
+	const placeholder = "\U0010EEEE"
+	for i := 0; i < heightCells; i++ {
+		sb.WriteString(strings.Repeat(placeholder, widthCells))
+		if i < heightCells-1 {
+			sb.WriteString("\n")
+		}
+	}
 	return sb.String()
 }
 
@@ -185,7 +209,7 @@ func FetchPosterCmd(client mediaserver.MediaSource, itemID, url string, widthCel
 		if err != nil {
 			return nil
 		}
-		content := RenderPoster(data, widthCells)
+		content := RenderPoster(data, itemID, widthCells)
 		if content == "" {
 			return nil
 		}

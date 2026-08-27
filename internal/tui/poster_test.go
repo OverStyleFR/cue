@@ -31,7 +31,7 @@ func TestRenderPosterASCII(t *testing.T) {
 	if tui.SupportsKittyImage() {
 		t.Skip("kitty env detected; testing ASCII path only")
 	}
-	out := tui.RenderPoster(makePosterPNG(t), 40)
+	out := tui.RenderPoster(makePosterPNG(t), "test", 40)
 	if len(out) < 100 {
 		t.Fatalf("ASCII poster too short: %d", len(out))
 	}
@@ -46,7 +46,7 @@ func TestRenderPosterKitty(t *testing.T) {
 	if !tui.SupportsKittyImage() {
 		t.Skip("kitty not detected")
 	}
-	out := tui.RenderPoster(makePosterPNG(t), 40)
+	out := tui.RenderPoster(makePosterPNG(t), "test", 40)
 	if !bytes.HasPrefix([]byte(out), []byte("\x1b_G")) {
 		t.Fatalf("kitty poster missing escape prefix")
 	}
