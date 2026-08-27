@@ -192,17 +192,20 @@ func kittyTransmit(pngBytes []byte, imageID uint32) string {
 }
 
 // kittyPlacement returns the kitty graphics protocol escape sequence that
-// places an already-transmitted image and fills its cells with Unicode
-// placeholders. Bubble Tea re-emits this string on every render, so the
-// image survives redraws.
+// places an already-transmitted image at the current cursor position.
 func kittyPlacement(imageID uint32, widthCells, heightCells int) string {
 	var sb strings.Builder
-
-	// Place the image (a=p) at the current cursor position.
 	sb.WriteString("\x1b_G")
 	fmt.Fprintf(&sb, "a=p,i=%d,c=%d,r=%d,C=1", imageID, widthCells, heightCells)
 	sb.WriteString("\x1b\\")
+	return sb.String()
+}
 
+// kittyPlaceholders returns just the Unicode placeholder characters that fill
+// the cells of a kitty image placement. Bubble Tea re-emits these on every
+// render so the image survives redraws without re-uploading pixels.
+func kittyPlaceholders(widthCells, heightCells int) string {
+	var sb strings.Builder
 	const placeholder = "\U0010EEEE"
 	for i := 0; i < heightCells; i++ {
 		sb.WriteString(strings.Repeat(placeholder, widthCells))
@@ -224,6 +227,25 @@ func FetchPosterCmd(client mediaserver.MediaSource, itemID, url string, widthCel
 		if err != nil {
 			return nil
 		}
+
+		if SupportsKittyImage() {
+			pngBytes, imageID, w, h, err := renderKitty(data, itemID, widthCells)
+			if err == nil {
+				// Transmit the pixels once. The placement + placeholders are
+				// rendered in the View; on subsequent frames only placeholders
+				// are re-emitted to keep the image visible without re-upload.
+				os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
+				return PosterLoadedMsg{
+					ItemID:      itemID,
+					Content:     kittyPlaceholders(w, h),
+					Placement:   kittyPlacement(imageID, w, h),
+					ImageID:     imageID,
+					WidthCells:  w,
+					HeightCells: h,
+				}
+			}
+		}
+
 		content := RenderPoster(data, itemID, widthCells)
 		if content == "" {
 			return nil

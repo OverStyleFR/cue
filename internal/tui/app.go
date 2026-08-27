@@ -167,6 +167,13 @@ type Model struct {
 	// for posterItemID. It is re-applied to the active column's inspector on
 	// every render, since the inspector clears its poster when SetItem is called.
 	posterContent string
+	// posterPlacement is the kitty placement escape emitted once when a kitty
+	// image is first shown; posterContent then only contains placeholders.
+	posterPlacement string
+	// posterImageID/WidthCells/HeightCells are kitty placement metadata.
+	posterImageID     uint32
+	posterWidthCells  int
+	posterHeightCells int
 }
 
 // NewModel creates a new application model
@@ -642,6 +649,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PosterLoadedMsg:
 		if msg.ItemID == m.posterItemID {
 			m.posterContent = msg.Content
+			m.posterPlacement = msg.Placement
+			m.posterImageID = msg.ImageID
+			m.posterWidthCells = msg.WidthCells
+			m.posterHeightCells = msg.HeightCells
 		}
 		return m, nil
 
