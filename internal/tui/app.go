@@ -163,6 +163,10 @@ type Model struct {
 	// posterItemID tracks the item a poster fetch was last requested for,
 	// so stale PosterLoadedMsg results are ignored.
 	posterItemID string
+	// posterContent holds the last rendered poster (ASCII art or kitty escape)
+	// for posterItemID. It is re-applied to the active column's inspector on
+	// every render, since the inspector clears its poster when SetItem is called.
+	posterContent string
 }
 
 // NewModel creates a new application model
@@ -637,7 +641,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PosterLoadedMsg:
 		if msg.ItemID == m.posterItemID {
-			m.Inspector.SetPoster(msg.Content)
+			m.posterContent = msg.Content
 		}
 		return m, nil
 
