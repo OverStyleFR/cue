@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/sahilm/fuzzy v0.1.1
+	github.com/saran13raj/go-pixels v0.0.0-20250629121333-58b240a3ae51
 	github.com/spf13/viper v1.21.0
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/term v0.39.0
@@ -40,6 +41,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/image v0.28.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 )

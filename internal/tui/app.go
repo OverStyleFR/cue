@@ -159,6 +159,10 @@ type Model struct {
 	pendingPlaylist    []domain.MediaItem
 	PendingSelectionID string // ID of item to select after load completes
 	pendingDelete      domain.ListItem
+
+	// posterItemID tracks the item a poster fetch was last requested for,
+	// so stale PosterLoadedMsg results are ignored.
+	posterItemID string
 }
 
 // NewModel creates a new application model
@@ -275,13 +279,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitMovies, msg.LibraryID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case ShowsLoadedMsg:
 		m.Loading = false
@@ -308,13 +312,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitShows, msg.LibraryID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case MixedLibraryLoadedMsg:
 		m.Loading = false
@@ -341,13 +345,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitMixed, msg.LibraryID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case SeasonsLoadedMsg:
 		m.Loading = false
@@ -371,14 +375,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			top.SetSeasonGroups(groups)
-			m.updateInspector()
+			pc := m.updateInspector()
 
 			// Auto-expand first season and kick off its episode load
 			if needsLoad, seasonID := top.ExpandFirstSeason(); needsLoad {
 				m.Loading = true
-				return m, LoadEpisodesCmd(m.LibraryService, m.currentLibID, m.currentShowID, seasonID)
+				return m, tea.Batch(pc, LoadEpisodesCmd(m.LibraryService, m.currentLibID, m.currentShowID, seasonID))
 			}
-			return m, nil
+			return m, pc
 		}
 
 		// Classic path: populate seasons column
@@ -387,13 +391,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if selectedID != "" {
 			top.SetSelectedByID(selectedID)
 		}
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitSeasons, msg.ShowID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case EpisodesLoadedMsg:
 		m.Loading = false
@@ -406,8 +410,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if top.ColumnType() == components.ColumnTypeSeasonEpisodes {
 			// New path: insert episodes into the matching season group
 			top.AddSeasonEpisodes(msg.SeasonID, msg.Episodes)
-			m.updateInspector()
-			return m, nil
+			pc := m.updateInspector()
+			return m, pc
 		}
 
 		// Classic path: validate and populate a standalone episodes column
@@ -419,13 +423,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if selectedID != "" {
 			top.SetSelectedByID(selectedID)
 		}
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitEpisodes, msg.SeasonID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case PlaybackStartedMsg:
 		m.isPlayingTitle = msg.Item.Title
@@ -605,8 +609,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if top := m.ColumnStack.Top(); top != nil {
 			top.SetItems(msg.Playlists)
 		}
-		m.updateInspector()
-		return m, nil
+		pc := m.updateInspector()
+		return m, pc
 
 	case PlaylistItemsLoadedMsg:
 		m.Loading = false
@@ -620,15 +624,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if top := m.ColumnStack.Top(); top != nil {
 			top.SetItems(msg.Items)
 		}
-		m.updateInspector()
-		return m, nil
+		pc := m.updateInspector()
+		return m, pc
 
 	case ContinueWatchingLoadedMsg:
 		m.Loading = false
 		if top := m.ColumnStack.Top(); top != nil && top.ContentID() == continueLibraryID {
 			top.SetItems(msg.Items)
 		}
-		m.updateInspector()
+		pc := m.updateInspector()
+		return m, pc
+
+	case PosterLoadedMsg:
+		if msg.ItemID == m.posterItemID {
+			m.Inspector.SetPoster(msg.Content)
+		}
 		return m, nil
 
 	case SeasonForPlaybackLoadedMsg:
@@ -733,7 +743,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if oldCursor != top.SelectedIndex() {
-			m.updateInspector()
+			if pc := m.updateInspector(); pc != nil {
+				cmds = append(cmds, pc)
+			}
 		}
 	}
 
@@ -892,12 +904,30 @@ func (m Model) findLibrary(id string) *domain.Library {
 }
 
 // updateInspector updates the inspector with the selected item from middle column
-func (m *Model) updateInspector() {
+func (m *Model) updateInspector() tea.Cmd {
 	if top := m.ColumnStack.Top(); top != nil {
-		m.Inspector.SetItem(top.SelectedItem())
+		item := top.SelectedItem()
+		m.Inspector.SetItem(item)
+		if item != nil {
+			id := m.getSelectedItemID(top)
+			if id != "" && id != m.posterItemID {
+				if url := PosterURL(item); url != "" {
+					width := m.Inspector.Width() - 3
+					if width > posterMaxWidth {
+						width = posterMaxWidth
+					}
+					if width < posterMinWidth {
+						width = posterMinWidth
+					}
+					m.posterItemID = id
+					return FetchPosterCmd(m.MediaClient, id, url, width)
+				}
+			}
+		}
 	} else {
 		m.Inspector.SetItem(nil)
 	}
+	return nil
 }
 
 // getSelectedItemID returns the ID of the selected item in a column
