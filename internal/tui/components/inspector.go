@@ -32,6 +32,7 @@ type Inspector struct {
 	maxVisible    int // max visible lines
 	libraryStates map[string]LibrarySyncState
 	Focused       bool
+	poster        string // rendered poster (ASCII art or kitty image escape sequence)
 }
 
 // NewInspector creates a new inspector component
@@ -48,6 +49,13 @@ func (i *Inspector) SetItem(item interface{}) {
 	}
 	i.item = item
 	i.offset = 0 // Reset scroll on item change
+	i.poster = "" // Clear any previously rendered poster
+}
+
+// SetPoster stores a rendered poster (ASCII art or kitty image escape sequence)
+// for the currently selected item.
+func (i *Inspector) SetPoster(content string) {
+	i.poster = content
 }
 
 // SetLibraryStates sets the library sync states for displaying item counts
@@ -64,6 +72,11 @@ func (i *Inspector) SetSize(width, height int) {
 	if i.maxVisible < 1 {
 		i.maxVisible = 1
 	}
+}
+
+// Width returns the configured width of the inspector panel.
+func (i Inspector) Width() int {
+	return i.width
 }
 
 // HasItem returns true if there is an item to display
@@ -205,24 +218,35 @@ func (i Inspector) View() string {
 
 // renderInspector renders the inspector panel content as three zones
 func (i Inspector) renderInspector(width int) inspectorContent {
+	var content inspectorContent
 	switch v := i.item.(type) {
 	case *domain.MediaItem:
-		return i.renderMediaItemInspector(*v, width)
+		content = i.renderMediaItemInspector(*v, width)
 	case *domain.Show:
-		return i.renderShowInspector(*v, width)
+		content = i.renderShowInspector(*v, width)
 	case *domain.Season:
-		return inspectorContent{header: i.renderSeasonInspector(*v, width)}
+		content = inspectorContent{header: i.renderSeasonInspector(*v, width)}
 	case *SeasonHeader:
-		return inspectorContent{header: i.renderSeasonInspector(*v.Season, width)}
+		content = inspectorContent{header: i.renderSeasonInspector(*v.Season, width)}
 	case *domain.Library:
-		return inspectorContent{body: i.renderLibraryInspector(v, width)}
+		content = inspectorContent{body: i.renderLibraryInspector(v, width)}
 	case domain.Library:
-		return inspectorContent{body: i.renderLibraryInspector(&v, width)}
+		content = inspectorContent{body: i.renderLibraryInspector(&v, width)}
 	case *domain.Playlist:
-		return inspectorContent{body: i.renderPlaylistInspector(*v, width)}
+		content = inspectorContent{body: i.renderPlaylistInspector(*v, width)}
 	default:
-		return inspectorContent{body: styles.DimStyle.Render("No item selected")}
+		content = inspectorContent{body: styles.DimStyle.Render("No item selected")}
 	}
+
+	// Prepend the rendered poster (ASCII art or kitty image) above the metadata.
+	if i.poster != "" {
+		if content.header == "" {
+			content.header = i.poster
+		} else {
+			content.header = i.poster + "\n" + content.header
+		}
+	}
+	return content
 }
 
 func (i Inspector) renderMediaItemInspector(item domain.MediaItem, width int) inspectorContent {

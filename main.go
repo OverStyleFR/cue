@@ -242,12 +242,15 @@ func run() error {
 
 	// Create TUI model with Store and concrete service types
 	model := tui.NewModel(libraryStore, librarySvc, playlistSvc, searchSvc, playbackSvc, client, cfg, cfg.UI, Version)
+	output := tui.NewOutputWriter(os.Stdout)
+	model.SetOutput(output)
 
 	// Run the TUI
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithOutput(output),
 	)
 
 	logger.Info("starting TUI")
