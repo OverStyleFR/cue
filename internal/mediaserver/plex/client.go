@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +40,7 @@ type Client struct {
 	baseURL           string
 	token             string
 	clientID          string // unique per-install X-Plex-Client-Identifier
+	deviceName        string // human-friendly name shown in Plex/Tautulli
 	machineIdentifier string // fetched from /identity on init
 	httpClient        *http.Client
 	logger            *slog.Logger
@@ -48,10 +51,17 @@ func NewClient(baseURL, token, clientID string, logger *slog.Logger) *Client {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Build a stable, human-friendly device name (e.g. "Cue (hostname)") so
+	// the session shows up clearly in Plex / Tautulli dashboards.
+	deviceName := "Cue"
+	if host, err := os.Hostname(); err == nil && host != "" {
+		deviceName = "Cue (" + host + ")"
+	}
 	return &Client{
-		baseURL:  strings.TrimRight(baseURL, "/"),
-		token:    token,
-		clientID: normalizeClientID(clientID),
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		token:      token,
+		clientID:   normalizeClientID(clientID),
+		deviceName: deviceName,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -142,6 +152,29 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	}
 
 	return body, nil
+}
+
+// GetImage downloads raw image bytes from an absolute URL, authenticating with the
+// Plex token. Used to render posters as ASCII art or terminal images.
+func (c *Client) GetImage(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create image request: %w", err)
+	}
+	req.Header.Set("X-Plex-Token", c.token)
+	req.Header.Set("X-Plex-Client-Identifier", c.clientID)
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, domain.ErrServerOffline
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("image request failed: status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // parseResponse parses a JSON response into APIResponse
@@ -509,10 +542,37 @@ func (c *Client) UpdateProgress(ctx context.Context, itemID string, positionMs i
 	query.Set("key", itemID)
 	query.Set("identifier", "com.plexapp.plugins.library")
 	query.Set("time", strconv.FormatInt(positionMs, 10))
-	query.Set("state", "stopped")
+	// Report "playing" while monitoring so we don't prematurely end the
+	// server-side session that ReportTimeline keeps alive. The final resume
+	// offset is still persisted by Plex from the "time" value.
+	query.Set("state", "playing")
 
 	_, err := c.doRequest(ctx, http.MethodGet, "/:/progress", query)
 	return err
+}
+
+// ReportTimeline registers and maintains a live Plex playback session so the
+// server (and downstream tools like Tautulli/Tracearr) surfaces a "Now Playing"
+// entry. Plex keys the session on X-Plex-Client-Identifier (the per-install
+// device ID). state is one of: playing, paused, stopped, buffering.
+func (c *Client) ReportTimeline(ctx context.Context, state, ratingKey string, timeMs, durationMs int64) error {
+	key := "/library/metadata/" + ratingKey
+	query := url.Values{}
+	query.Set("state", state)
+	query.Set("time", strconv.FormatInt(timeMs, 10))
+	query.Set("duration", strconv.FormatInt(durationMs, 10))
+	query.Set("key", key)
+	query.Set("ratingKey", ratingKey)
+	query.Set("protocol", "http")
+	query.Set("hasMDE", "1")
+	query.Set("playbackTime", strconv.FormatInt(timeMs, 10))
+
+	// Session reporting is best-effort: Tautulli visibility must never block
+	// or break local playback, so errors are logged and swallowed.
+	if _, err := c.doRequest(ctx, http.MethodGet, "/:/timeline", query); err != nil {
+		c.logger.Warn("failed to report playback timeline to plex", "state", state, "ratingKey", ratingKey, "error", err)
+	}
+	return nil
 }
 
 // GetPlaylists returns all user playlists
@@ -649,6 +709,9 @@ func (c *Client) AddToPlaylist(ctx context.Context, playlistID string, itemIDs [
 		req.Header.Set("X-Plex-Client-Identifier", c.clientID)
 		req.Header.Set("X-Plex-Product", "Cue")
 		req.Header.Set("X-Plex-Version", "1.0")
+		req.Header.Set("X-Plex-Device-Name", c.deviceName)
+		req.Header.Set("X-Plex-Device", runtime.GOOS)
+		req.Header.Set("X-Plex-Platform", runtime.GOOS)
 		req.Header.Set("User-Agent", userAgent)
 
 		resp, err := c.httpClient.Do(req)

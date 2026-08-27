@@ -82,7 +82,7 @@ func (m *Model) pushAndLoadColumn(spec columnLoadSpec, cursor int) *drillResult 
 
 	if cached := spec.getCached(); cached != nil {
 		col.SetItems(cached)
-		m.updateInspector()
+		pc := m.updateInspector()
 		if m.navPlan != nil {
 			return &drillResult{
 				AwaitKind: spec.awaitKind,
@@ -90,7 +90,7 @@ func (m *Model) pushAndLoadColumn(spec columnLoadSpec, cursor int) *drillResult 
 				Cmd:       m.advanceNavPlanAfterLoad(spec.awaitKind, spec.awaitID),
 			}
 		}
-		return &drillResult{AwaitKind: AwaitNone}
+		return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
 	}
 
 	col.SetLoading(true)
@@ -202,8 +202,8 @@ func (m *Model) drillSelected() *drillResult {
 			// Check cache first
 			if cached, ok := m.Store.GetPlaylists(); ok {
 				col.SetItems(cached)
-				m.updateInspector()
-				return &drillResult{AwaitKind: AwaitNone}
+				pc := m.updateInspector()
+				return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
 			}
 
 			col.SetLoading(true)
@@ -338,11 +338,11 @@ func (m *Model) drillSelected() *drillResult {
 		m.updateLayout()
 
 		// Check cache first
-		if cached, ok := m.Store.GetPlaylistItems(v.ID); ok {
-			col.SetItems(cached)
-			m.updateInspector()
-			return &drillResult{AwaitKind: AwaitNone}
-		}
+			if cached, ok := m.Store.GetPlaylistItems(v.ID); ok {
+				col.SetItems(cached)
+				pc := m.updateInspector()
+				return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
+			}
 
 		col.SetLoading(true)
 		m.Loading = true
@@ -517,8 +517,8 @@ func (m *Model) drillVirtualLibrary(v domain.Library, cursor int) *drillResult {
 	col.SetItems(items)
 	m.ColumnStack.Push(col, cursor)
 	m.updateLayout()
-	m.updateInspector()
-	return &drillResult{AwaitKind: AwaitNone}
+	pc := m.updateInspector()
+	return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
 }
 
 // drillIntoSelection pushes a new column for the selected item
@@ -564,8 +564,8 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 	}
 
 	m.updateLayout()
-	m.updateInspector()
-	return m, nil
+	pc := m.updateInspector()
+	return m, pc
 }
 
 // advanceNavPlanAfterLoad advances the navigation plan after an async load completes
@@ -606,8 +606,8 @@ func (m *Model) advanceNavPlanAfterLoad(kind NavAwaitKind, id string) tea.Cmd {
 
 	if p.IsComplete() {
 		m.clearNavPlan()
-		m.updateInspector()
-		return nil
+		pc := m.updateInspector()
+		return pc
 	}
 
 	// More steps: drill to next level

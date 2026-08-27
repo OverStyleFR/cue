@@ -27,4 +27,9 @@ type PlaybackClient interface {
 	// UpdateProgress reports the current playback position to the server.
 	// positionMs is the current position in milliseconds.
 	UpdateProgress(ctx context.Context, itemID string, positionMs int64) error
+	// ReportTimeline reports the current playback state to the server to
+	// create and maintain a live session (e.g. Plex "Now Playing"). state is
+	// one of "playing", "paused", "stopped", "buffering". ratingKey is the
+	// item's rating key; timeMs/durationMs are in milliseconds.
+	ReportTimeline(ctx context.Context, state, ratingKey string, timeMs, durationMs int64) error
 }

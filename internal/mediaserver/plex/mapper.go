@@ -73,6 +73,9 @@ func mapMovie(m Metadata, serverURL string) domain.MediaItem {
 	if m.Art != "" {
 		item.ArtURL = serverURL + m.Art
 	}
+	if m.GrandparentThumb != "" {
+		item.ShowThumbURL = serverURL + m.GrandparentThumb
+	}
 
 	item.ContentRating = normalizeContentRating(m.ContentRating)
 	if len(m.Media) > 0 {
@@ -226,6 +229,9 @@ func mapEpisode(m Metadata, serverURL string) domain.MediaItem {
 	}
 	if m.Art != "" {
 		item.ArtURL = serverURL + m.Art
+	}
+	if m.GrandparentThumb != "" {
+		item.ShowThumbURL = serverURL + m.GrandparentThumb
 	}
 
 	item.ContentRating = normalizeContentRating(m.ContentRating)
