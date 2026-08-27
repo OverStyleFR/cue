@@ -68,6 +68,7 @@ type ListColumn struct {
 	showWatchStatus   bool // Whether to show watch status indicators
 	showLibraryCounts bool // Whether to keep library item counts visible after sync
 	hideWatched       bool // Whether to hide watched items from the list
+	showShowTitle     bool // Whether to show the series name for episodes (Continue Watching)
 
 	// Content identity for race condition prevention
 	contentID string
@@ -462,6 +463,12 @@ func (c *ListColumn) SetShowLibraryCounts(show bool) {
 func (c *ListColumn) SetHideWatched(hide bool) {
 	c.hideWatched = hide
 	c.applyFilter()
+}
+
+// SetShowShowTitle sets whether episodes should display their series name
+// (used by the Continue Watching virtual library).
+func (c *ListColumn) SetShowShowTitle(show bool) {
+	c.showShowTitle = show
 }
 
 // SetContentID sets the content identity for race condition prevention
@@ -1177,6 +1184,28 @@ func (c *ListColumn) renderEpisodeItem(item domain.MediaItem, selected bool, wid
 		indicatorChar, indicatorFg = mediaItemWatchIndicator(item)
 	} else {
 		indicatorChar = " "
+	}
+
+	// In Continue Watching, show the series name first: "Show - S01E05 Title"
+	if c.showShowTitle && item.ShowTitle != "" {
+		title := fmt.Sprintf("%s - %s %s", item.ShowTitle, item.EpisodeCode(), item.Title)
+
+		availableForTitle := width - 4
+		tag := c.sortTag(&item)
+		if tag != "" {
+			availableForTitle -= len(tag) + 1
+		}
+		if availableForTitle < 5 {
+			availableForTitle = 5
+		}
+		title = styles.Truncate(title, availableForTitle)
+
+		parts := appendSortTag([]styles.RowPart{
+			{Text: indicatorChar, Foreground: &indicatorFg},
+			{Text: " " + title, Foreground: nil},
+		}, tag, width)
+
+		return styles.RenderListRow(parts, selected, width)
 	}
 
 	code := item.EpisodeCode()

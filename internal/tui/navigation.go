@@ -364,6 +364,7 @@ func (m *Model) drillVirtualLibrary(v domain.Library, cursor int) *drillResult {
 	case continueLibraryID:
 		col := components.NewListColumn(components.ColumnTypeMixed, title)
 		col.SetShowWatchStatus(m.UIConfig.ShowWatchStatus)
+		col.SetShowShowTitle(true)
 		col.SetContentID(contentID)
 		col.SetLoading(true)
 		m.ColumnStack.Push(col, cursor)
