@@ -514,12 +514,22 @@ func (c *ListColumn) SelectedSeason() *domain.Season {
 // SelectedMediaItem returns the selected media item (if in movies/episodes/playlist items/mixed column)
 func (c *ListColumn) SelectedMediaItem() *domain.MediaItem {
 	switch c.columnType {
-	case ColumnTypeMovies, ColumnTypeEpisodes, ColumnTypePlaylistItems, ColumnTypeSeasonEpisodes:
+	case ColumnTypeMovies, ColumnTypeEpisodes, ColumnTypePlaylistItems:
 		item := c.SelectedItem()
 		if item == nil {
 			return nil
 		}
 		return item.(*domain.MediaItem)
+	case ColumnTypeSeasonEpisodes:
+		// Collapsible season+episode columns may have a season header selected.
+		item := c.SelectedItem()
+		if item == nil {
+			return nil
+		}
+		if mediaItem, ok := item.(*domain.MediaItem); ok {
+			return mediaItem
+		}
+		return nil
 	case ColumnTypeMixed:
 		// Mixed content can be either MediaItem (movie) or Show
 		item := c.SelectedItem()

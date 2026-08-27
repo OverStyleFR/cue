@@ -30,7 +30,15 @@ const (
 
 // SupportsKittyImage reports whether the terminal likely supports the kitty
 // graphics protocol (used to draw real poster images instead of ASCII art).
+//
+// The kitty graphics protocol is disabled by default: in a scrolling full-screen
+// TUI the image must be re-emitted or use Unicode placeholders on every frame
+// to survive Bubble Tea redraws. ASCII art is reliable everywhere. Users can
+// opt into the experimental kitty protocol with CUE_KITTY_IMAGES=1.
 func SupportsKittyImage() bool {
+	if os.Getenv("CUE_KITTY_IMAGES") != "1" {
+		return false
+	}
 	if os.Getenv("KITTY_WINDOW_ID") != "" {
 		return true
 	}
