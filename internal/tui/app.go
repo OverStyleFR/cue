@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/SuperCoolPencil/cue/internal/config"
@@ -164,6 +165,10 @@ type Model struct {
 	// posterItemID tracks the item a poster fetch was last requested for,
 	// so stale PosterLoadedMsg results are ignored.
 	posterItemID string
+	// posterRequestKey identifies the item, URL, and rendered dimensions
+	// currently being requested.
+	posterRequestKey string
+	posterRequestID  uint64
 	// posterContent holds the last rendered poster (ASCII art or kitty escape)
 	// for posterItemID. It is re-applied to the active column's inspector on
 	// every render, since the inspector clears its poster when SetItem is called.
@@ -171,6 +176,7 @@ type Model struct {
 	// posterPlacement is the virtual kitty placement prepended to the
 	// placeholder cells whenever the poster is rendered.
 	posterPlacement string
+	posterImageID   uint32
 	posterOutput    io.Writer
 }
 
@@ -231,7 +237,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 		m.Ready = true
 		m.updateLayout()
-		return m, nil
+		return m, m.updateInspector()
 
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
@@ -651,10 +657,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, pc
 
 	case PosterLoadedMsg:
-		if msg.ItemID == m.posterItemID {
-			m.posterContent = msg.Content
-			m.posterPlacement = msg.Placement
+		if msg.RequestID != m.posterRequestID || msg.ItemID != m.posterItemID {
+			deleteKittyImage(m.posterOutput, msg.ImageID)
+			return m, nil
 		}
+		m.posterContent = msg.Content
+		m.posterPlacement = msg.Placement
+		m.posterImageID = msg.ImageID
 		return m, nil
 
 	case SeasonForPlaybackLoadedMsg:
@@ -790,6 +799,7 @@ func (m *Model) updateLibraryStates() {
 
 // refreshCurrentView refreshes the current view
 func (m *Model) refreshCurrentView() tea.Cmd {
+	m.invalidatePoster()
 	if m.currentLibID != "" {
 		m.LibraryService.InvalidateLibrary(m.currentLibID)
 	} else {
@@ -921,29 +931,101 @@ func (m Model) findLibrary(id string) *domain.Library {
 
 // updateInspector updates the inspector with the selected item from middle column
 func (m *Model) updateInspector() tea.Cmd {
-	if top := m.ColumnStack.Top(); top != nil {
-		item := top.SelectedItem()
-		m.Inspector.SetItem(item)
-		if item != nil {
-			id := m.getSelectedItemID(top)
-			if id != "" && id != m.posterItemID {
-				if url := PosterURL(item); url != "" {
-					width := m.Inspector.Width() - 3
-					if width > posterMaxWidth {
-						width = posterMaxWidth
-					}
-					if width < posterMinWidth {
-						width = posterMinWidth
-					}
-					m.posterItemID = id
-					return FetchPosterCmd(m.MediaClient, m.posterOutput, id, url, width)
-				}
-			}
-		}
-	} else {
-		m.Inspector.SetItem(nil)
+	var top *components.ListColumn
+	if m.ColumnStack != nil {
+		top = m.ColumnStack.Top()
 	}
-	return nil
+	if top == nil {
+		m.Inspector.SetItem(nil)
+		if m.hasPosterState() {
+			m.invalidatePoster()
+		}
+		return nil
+	}
+
+	item := top.SelectedItem()
+	m.Inspector.SetItem(item)
+	id := m.getSelectedItemID(top)
+	url := PosterURL(item)
+	if id == "" || (url == "" && !posterMetadataFallback(item)) {
+		if m.hasPosterState() {
+			m.invalidatePoster()
+		}
+		return nil
+	}
+
+	width := top.Width() - 3
+	if width <= 0 {
+		width = m.Inspector.Width() - 3
+	}
+	if width > posterMaxWidth {
+		width = posterMaxWidth
+	}
+	if width < posterMinWidth {
+		width = posterMinWidth
+	}
+	maxHeight := m.posterMaxHeight(top)
+	requestKey := strings.Join([]string{id, url, fmt.Sprint(width), fmt.Sprint(maxHeight)}, "\x00")
+	if requestKey == m.posterRequestKey {
+		return nil
+	}
+
+	m.clearPosterState()
+	m.posterRequestID++
+	requestID := m.posterRequestID
+	m.posterRequestKey = requestKey
+	m.posterItemID = id
+	return FetchPosterCmd(m.MediaClient, m.posterOutput, requestID, id, url, width, maxHeight)
+}
+
+func posterMetadataFallback(item interface{}) bool {
+	_, ok := item.(*domain.MediaItem)
+	return ok
+}
+
+func (m Model) posterMaxHeight(top *components.ListColumn) int {
+	if top == nil || m.Height <= ChromeHeight {
+		return 0
+	}
+
+	contentHeight := m.Height - ChromeHeight
+	listHeight := contentHeight / 3
+	if top.ColumnType() == components.ColumnTypeEpisodes || top.ColumnType() == components.ColumnTypeSeasonEpisodes {
+		listHeight = (55 * contentHeight) / 100
+	}
+	if listHeight < 4 {
+		listHeight = 4
+	}
+
+	// Keep the Kitty overlay inside the inspector panel. The panel reserves
+	// two lines for its title and border before the poster starts.
+	maxHeight := contentHeight - listHeight - 4
+	if maxHeight < 1 {
+		maxHeight = 1
+	}
+	return maxHeight
+}
+
+func (m *Model) hasPosterState() bool {
+	return m.posterRequestKey != "" || m.posterItemID != "" || m.posterContent != "" ||
+		m.posterPlacement != "" || m.posterImageID != 0
+}
+
+// clearPosterState removes the currently rendered Kitty image and clears the
+// displayed poster without invalidating the request generation.
+func (m *Model) clearPosterState() {
+	deleteKittyImage(m.posterOutput, m.posterImageID)
+	m.posterItemID = ""
+	m.posterContent = ""
+	m.posterPlacement = ""
+	m.posterImageID = 0
+}
+
+// invalidatePoster makes every in-flight poster result stale.
+func (m *Model) invalidatePoster() {
+	m.posterRequestID++
+	m.posterRequestKey = ""
+	m.clearPosterState()
 }
 
 // getSelectedItemID returns the ID of the selected item in a column

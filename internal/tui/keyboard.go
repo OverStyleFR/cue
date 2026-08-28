@@ -328,6 +328,7 @@ func (m Model) handleRefresh() (tea.Model, tea.Cmd) {
 	if top == nil {
 		return m, nil
 	}
+	m.invalidatePoster()
 
 	switch top.ColumnType() {
 	case components.ColumnTypeLibraries:
@@ -421,6 +422,7 @@ func (m Model) refreshLibraryContent(top *components.ListColumn) (Model, tea.Cmd
 // handleRefreshAll refreshes all libraries and resets to library view
 func (m Model) handleRefreshAll() (tea.Model, tea.Cmd) {
 	m.Loading = true
+	m.invalidatePoster()
 
 	// Invalidate all cached data, then re-fetch libraries from the server.
 	// This goes through LoadLibrariesCmd -> LibrariesLoadedMsg which rebuilds
