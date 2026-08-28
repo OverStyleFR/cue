@@ -38,14 +38,52 @@ const (
 
 // SupportsKittyImage reports whether the terminal likely supports the kitty
 // graphics protocol (used to draw real poster images instead of ASCII art).
+//
+// Terminal multiplexers such as Zellij, tmux and GNU screen sit between the
+// application and the real terminal and do not forward kitty graphics escape
+// sequences, so this function returns false even when the outer terminal is
+// Kitty.
 func SupportsKittyImage() bool {
-	if os.Getenv("KITTY_WINDOW_ID") != "" {
+	term := os.Getenv("TERM")
+	kittyWindowID := os.Getenv("KITTY_WINDOW_ID")
+	multiplexer := terminalMultiplexer()
+
+	slog.Debug("poster terminal detection",
+		"TERM", term,
+		"KITTY_WINDOW_ID", kittyWindowID,
+		"multiplexer", multiplexer,
+	)
+
+	if multiplexer != "" {
+		slog.Debug("kitty images disabled: terminal multiplexer detected", "multiplexer", multiplexer)
+		return false
+	}
+	if kittyWindowID != "" {
+		slog.Debug("kitty images enabled: KITTY_WINDOW_ID present", "id", kittyWindowID)
 		return true
 	}
-	if strings.Contains(os.Getenv("TERM"), "kitty") {
+	if strings.Contains(term, "kitty") {
+		slog.Debug("kitty images enabled: TERM contains kitty", "TERM", term)
 		return true
 	}
+	slog.Debug("kitty images disabled: no kitty terminal detected")
 	return false
+}
+
+// terminalMultiplexer returns the name of an active terminal multiplexer, or
+// an empty string if none is detected. The kitty graphics protocol does not
+// survive most multiplexers, so callers should fall back to ASCII art.
+func terminalMultiplexer() string {
+	switch {
+	case os.Getenv("ZELLIJ_SESSION_NAME") != "" || os.Getenv("ZELLIJ") != "":
+		return "zellij"
+	case os.Getenv("TMUX") != "":
+		return "tmux"
+	case os.Getenv("STY") != "":
+		return "screen"
+	default:
+		return ""
+	}
 }
 
 // PosterURL returns the best poster/artwork URL for a selected list item.
@@ -78,19 +116,24 @@ func PosterURL(item interface{}) string {
 // a placement string with Unicode placeholders is returned. Bubble Tea re-emits
 // the placement on every render, so the image survives redraws.
 func RenderPoster(data []byte, itemID string, widthCells int) string {
+	slog.Debug("RenderPoster", "itemID", itemID, "widthCells", widthCells, "kitty", SupportsKittyImage())
 	if SupportsKittyImage() {
 		pngBytes, imageID, w, h, err := renderKitty(data, itemID, 0, widthCells, 0)
 		if err == nil {
 			// Transmit the pixels once. The placement (returned below) is
 			// re-emitted on each frame, keeping the image visible.
 			os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
+			slog.Debug("RenderPoster: using kitty", "itemID", itemID, "imageID", imageID, "widthCells", w, "heightCells", h)
 			return kittyPlacement(imageID, w, h) + kittyPlaceholders(imageID, w, h)
 		}
+		slog.Debug("RenderPoster: kitty render failed, falling back to ASCII", "itemID", itemID, "error", err)
 	}
 	s, err := renderASCII(data, widthCells, 0)
 	if err != nil {
+		slog.Debug("RenderPoster: ASCII render failed", "itemID", itemID, "error", err)
 		return ""
 	}
+	slog.Debug("RenderPoster: using ASCII", "itemID", itemID, "outputLen", len(s))
 	return s
 }
 
@@ -304,10 +347,12 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 				if output == nil {
 					output = os.Stdout
 				}
+				slog.Debug("FetchPosterCmd: transmitting kitty image", "itemID", itemID, "imageID", imageID, "widthCells", w, "heightCells", h)
 				if _, err := io.WriteString(output, kittyTransmit(pngBytes, imageID)); err != nil {
 					slog.Debug("kitty transmit failed", "itemID", itemID, "error", err)
 					return nil
 				}
+				slog.Debug("FetchPosterCmd: returning kitty poster", "itemID", itemID, "imageID", imageID)
 				return PosterLoadedMsg{
 					RequestID: requestID,
 					ItemID:    itemID,
@@ -317,6 +362,8 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 				}
 			}
 			slog.Debug("kitty render failed, falling back to ASCII", "itemID", itemID, "error", err)
+		} else {
+			slog.Debug("FetchPosterCmd: kitty not supported, using ASCII", "itemID", itemID)
 		}
 
 		content, err := renderASCII(data, widthCells, maxHeightCells)
