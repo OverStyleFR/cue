@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/png"
@@ -70,5 +71,27 @@ func TestPosterURLPrefersMoviePosterOverSeriesPoster(t *testing.T) {
 	}
 	if got := tui.PosterURL(movie); got != "movie-poster" {
 		t.Fatalf("movie poster URL = %q", got)
+	}
+}
+
+// tinyWebP is a minimal 80x120 WebP image generated for regression testing.
+const tinyWebP = "UklGRgYBAABXRUJQVlA4IPoAAABwBwCdASpQAHgAPpFGoUwlo6MiInVYOLASCWkAVH7i0GZrmAA5IpAFuVuZIbxlSS5YGJwEtsKfqP4Dnx/RuVuZLpyIAAD+8PGr9W0wdVn/160tzdMAADh7q8ob2n/uyWKly/j6URpGgPdOD7819/0ScdNcsP+u8cWUN7FCeCr5zHq9/ngygqXg7wL1U580gy2mo8YE7dsW/Z05/b7l3GR4apGnuFH0uHykvcjmzAQXWjTwsgvjR37IhW+hWSGPvu183CkK77b5jDK4IQflq1X/2V+TPfMyKekajtHpwf/2woViYRzJJsGvJ8WLo+gR6d0FOjT5tygAAAAA"
+
+func TestRenderPosterDecodesWebP(t *testing.T) {
+	os.Unsetenv("KITTY_WINDOW_ID")
+	os.Unsetenv("TERM")
+	if tui.SupportsKittyImage() {
+		t.Skip("kitty env detected; testing ASCII path only")
+	}
+	data, err := base64.StdEncoding.DecodeString(tinyWebP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := tui.RenderPoster(data, "webp-test", 40)
+	if len(out) < 50 {
+		t.Fatalf("WebP poster not rendered, output length: %d", len(out))
+	}
+	if !bytes.ContainsAny([]byte(out), "▀▄█▌▐░▒▓") {
+		t.Fatalf("no block chars in WebP ASCII poster")
 	}
 }

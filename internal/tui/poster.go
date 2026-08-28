@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"hash/fnv"
 	"image"
+	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
 	_ "image/png"
+	_ "golang.org/x/image/webp"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -288,6 +291,7 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 	return func() tea.Msg {
 		data, err := fetchPosterData(client, itemID, url)
 		if err != nil {
+			slog.Debug("poster fetch failed", "itemID", itemID, "url", url, "error", err)
 			return nil
 		}
 
@@ -301,6 +305,7 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 					output = os.Stdout
 				}
 				if _, err := io.WriteString(output, kittyTransmit(pngBytes, imageID)); err != nil {
+					slog.Debug("kitty transmit failed", "itemID", itemID, "error", err)
 					return nil
 				}
 				return PosterLoadedMsg{
@@ -311,10 +316,12 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 					ImageID:   imageID,
 				}
 			}
+			slog.Debug("kitty render failed, falling back to ASCII", "itemID", itemID, "error", err)
 		}
 
 		content, err := renderASCII(data, widthCells, maxHeightCells)
 		if err != nil || content == "" {
+			slog.Debug("ASCII render failed", "itemID", itemID, "error", err, "empty", content == "")
 			return nil
 		}
 		return PosterLoadedMsg{RequestID: requestID, ItemID: itemID, Content: content}
@@ -347,6 +354,7 @@ func fetchPosterData(client mediaserver.MediaSource, itemID, url string) ([]byte
 		if err == nil {
 			return data, nil
 		}
+		slog.Debug("fetchPosterData download attempt failed", "itemID", itemID, "attempt", attempt+1, "error", err)
 		if attempt+1 < posterFetchAttempts {
 			time.Sleep(100 * time.Millisecond)
 		}
