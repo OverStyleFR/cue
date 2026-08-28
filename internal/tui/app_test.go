@@ -148,3 +148,55 @@ func TestUpdateInspectorClearsPosterWithoutArtwork(t *testing.T) {
 		t.Fatal("old poster state was not cleared")
 	}
 }
+
+func TestPosterMaxHeightFitsMovieInspector(t *testing.T) {
+	movieCol := components.NewListColumn(components.ColumnTypeMovies, "Movies")
+	movieCol.SetItems([]*domain.MediaItem{{
+		ID:    "movie-1",
+		Type:  domain.MediaTypeMovie,
+		Title: "Movie",
+		// Technical footer is rendered for movies.
+		VideoCodec: "H.264",
+		AudioCodec: "AAC",
+	}})
+	movieCol.SetSize(50, 20)
+
+	m := Model{
+		ColumnStack: NewColumnStack(),
+		Height:      30,
+	}
+	m.ColumnStack.Push(movieCol, 0)
+
+	maxHeight := m.posterMaxHeight(movieCol)
+	contentHeight := m.Height - ChromeHeight
+	infoHeight := contentHeight - contentHeight/3
+	if maxHeight <= 0 || maxHeight >= infoHeight {
+		t.Fatalf("movie poster maxHeight = %d, expected 0 < maxHeight < infoHeight %d", maxHeight, infoHeight)
+	}
+}
+
+func TestPosterMaxHeightFitsEpisodeInspector(t *testing.T) {
+	epCol := components.NewListColumn(components.ColumnTypeEpisodes, "Episodes")
+	epCol.SetItems([]*domain.MediaItem{{
+		ID:       "ep-1",
+		Type:     domain.MediaTypeEpisode,
+		Title:    "Episode",
+		ParentID: "season-1",
+		ShowID:   "show-1",
+	}})
+	epCol.SetSize(50, 20)
+
+	m := Model{
+		ColumnStack: NewColumnStack(),
+		Height:      30,
+	}
+	m.ColumnStack.Push(epCol, 0)
+
+	maxHeight := m.posterMaxHeight(epCol)
+	contentHeight := m.Height - ChromeHeight
+	listHeight := (55 * contentHeight) / 100
+	infoHeight := contentHeight - listHeight
+	if maxHeight <= 0 || maxHeight >= infoHeight {
+		t.Fatalf("episode poster maxHeight = %d, expected 0 < maxHeight < infoHeight %d", maxHeight, infoHeight)
+	}
+}

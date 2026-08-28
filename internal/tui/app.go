@@ -997,9 +997,23 @@ func (m Model) posterMaxHeight(top *components.ListColumn) int {
 		listHeight = 4
 	}
 
-	// Keep the Kitty overlay inside the inspector panel. The panel reserves
-	// two lines for its title and border before the poster starts.
-	maxHeight := contentHeight - listHeight - 4
+	infoHeight := contentHeight - listHeight
+	if infoHeight < 6 {
+		infoHeight = 6
+	}
+
+	// Reserve space for the inspector title/blank, the non-poster header
+	// metadata, the technical footer (movies/episodes), the two scroll
+	// indicators and a safety margin. This guarantees the rendered poster
+	// never makes the inspector panel taller than its allocated height.
+	reserved := 8
+	if item := top.SelectedItem(); item != nil {
+		if mi, ok := item.(*domain.MediaItem); ok && mi.Type == domain.MediaTypeMovie {
+			reserved = 10
+		}
+	}
+
+	maxHeight := infoHeight - reserved
 	if maxHeight < 1 {
 		maxHeight = 1
 	}

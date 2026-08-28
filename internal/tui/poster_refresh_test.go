@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
@@ -92,5 +93,27 @@ func TestRenderKittyFitsInspectorHeight(t *testing.T) {
 	}
 	if width >= 44 {
 		t.Fatalf("poster width = %d, expected width reduction to fit height", width)
+	}
+}
+
+func TestRenderASCIIFitsMaxHeight(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 80, 120))
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 80; x++ {
+			img.Set(x, y, color.RGBA{100, 120, 140, 255})
+		}
+	}
+	var data bytes.Buffer
+	if err := png.Encode(&data, img); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := renderASCII(data.Bytes(), 40, 5)
+	if err != nil {
+		t.Fatalf("renderASCII() error = %v", err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) > 5 {
+		t.Fatalf("ASCII poster has %d lines, expected at most 5; got:\n%s", len(lines), out)
 	}
 }
