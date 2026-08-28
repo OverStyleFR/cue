@@ -161,6 +161,27 @@ func truncateForLog(body []byte) string {
 	return string(body)
 }
 
+// GetImage downloads raw image bytes from an absolute URL, authenticating with the
+// Jellyfin token. Used to render posters as ASCII art or terminal images.
+func (c *Client) GetImage(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create image request: %w", err)
+	}
+	req.Header.Set("X-Emby-Authorization", buildAuthHeader(c.token, c.deviceID))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, domain.ErrServerOffline
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("image request failed: status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
 // GetLibraries returns all available libraries (Views)
 func (c *Client) GetLibraries(ctx context.Context) ([]domain.Library, error) {
 	path := fmt.Sprintf("/Users/%s/Views", c.userID)

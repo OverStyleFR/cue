@@ -230,6 +230,12 @@ func (m Model) renderSplitColumn(col *components.ListColumn, colWidth, listHeigh
 	}
 
 	insp.SetItem(selected)
+	// Re-apply the fetched poster to this column's inspector (SetItem clears it).
+	if selected != nil {
+		if li, ok := selected.(domain.ListItem); ok && li.GetID() == m.posterItemID && m.posterContent != "" {
+			insp.SetPoster(m.posterPlacement + m.posterContent)
+		}
+	}
 	infoView := insp.View()
 
 	return lipgloss.JoinVertical(lipgloss.Left, listView, infoView)

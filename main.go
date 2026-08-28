@@ -58,8 +58,11 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	var showVersion bool
+	var debug bool
 	fs.BoolVar(&showVersion, "v", false, "print version")
 	fs.BoolVar(&showVersion, "version", false, "print version")
+	fs.BoolVar(&debug, "d", false, "enable debug logging")
+	fs.BoolVar(&debug, "debug", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -100,6 +103,9 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stdout, "\nCommands:")
 			_, _ = fmt.Fprintln(stdout, "  completion   Generate shell completion scripts")
 			_, _ = fmt.Fprintln(stdout, "  help         Show this help")
+			_, _ = fmt.Fprintln(stdout, "\nFlags:")
+			_, _ = fmt.Fprintln(stdout, "  -d, --debug  Enable debug logging")
+			_, _ = fmt.Fprintln(stdout, "  -v, --version  Print version")
 			return 0
 		default:
 			_, _ = fmt.Fprintf(stderr, "Error: unknown command %q\n", remainingArgs[0])
@@ -108,7 +114,7 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	if err := run(); err != nil {
+	if err := run(debug); err != nil {
 		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
@@ -133,7 +139,7 @@ const bashCompletion = `_cue_completions() {
     esac
 
     if [[ ${cur} == -* ]] ; then
-        COMPREPLY=( $(compgen -W "-v -version" -- ${cur}) )
+        COMPREPLY=( $(compgen -W "-v -version -d -debug" -- ${cur}) )
         return 0
     fi
 
@@ -148,6 +154,8 @@ _cue() {
     _arguments -C \
         "-v[print version]" \
         "--version[print version]" \
+        "-d[enable debug logging]" \
+        "--debug[enable debug logging]" \
         "1: :((completion\:'Generate shell completion scripts' help\:'Show help'))" \
         "*::arg:->args"
     case $line[1] in
@@ -171,6 +179,12 @@ const psCompletion = `Register-ArgumentCompleter -CommandName cue -ScriptBlock {
         $completions += New-Object System.Management.Automation.CompletionResult "fish", "fish", "ParameterValue", "fish"
         $completions += New-Object System.Management.Automation.CompletionResult "powershell", "powershell", "ParameterValue", "powershell"
     }
+    if ($wordToComplete -like "-*") {
+        $completions += New-Object System.Management.Automation.CompletionResult "-v", "-v", "ParameterName", "Print version"
+        $completions += New-Object System.Management.Automation.CompletionResult "--version", "--version", "ParameterName", "Print version"
+        $completions += New-Object System.Management.Automation.CompletionResult "-d", "-d", "ParameterName", "Enable debug logging"
+        $completions += New-Object System.Management.Automation.CompletionResult "--debug", "--debug", "ParameterName", "Enable debug logging"
+    }
     $completions | Where-Object { $_.CompletionText -like "$wordToComplete*" }
 }
 `
@@ -187,14 +201,20 @@ complete -c cue -f
 complete -c cue -n "__fish_cue_no_subcommand" -a "completion" -d "Generate shell completion scripts"
 complete -c cue -n "__fish_cue_no_subcommand" -a "help" -d "Show help"
 complete -c cue -s v -l version -d "Print version"
+complete -c cue -s d -l debug -d "Enable debug logging"
 complete -c cue -n "__fish_seen_subcommand_from completion" -a "bash zsh fish powershell" -d "Shell type"
 `
 
-func run() error {
+func run(debug bool) error {
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Override log level when --debug is passed on the command line.
+	if debug {
+		cfg.Logging.Level = "DEBUG"
 	}
 
 	// Setup logger
@@ -242,12 +262,15 @@ func run() error {
 
 	// Create TUI model with Store and concrete service types
 	model := tui.NewModel(libraryStore, librarySvc, playlistSvc, searchSvc, playbackSvc, client, cfg, cfg.UI, Version)
+	output := tui.NewOutputWriter(os.Stdout)
+	model.SetOutput(output)
 
 	// Run the TUI
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithOutput(output),
 	)
 
 	logger.Info("starting TUI")
