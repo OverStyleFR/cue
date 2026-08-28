@@ -122,7 +122,7 @@ func RenderPoster(data []byte, itemID string, widthCells int) string {
 		if err == nil {
 			// Transmit the pixels once. The placement (returned below) is
 			// re-emitted on each frame, keeping the image visible.
-			os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
+			_, _ = os.Stdout.WriteString(kittyTransmit(pngBytes, imageID))
 			slog.Debug("RenderPoster: using kitty", "itemID", itemID, "imageID", imageID, "widthCells", w, "heightCells", h)
 			return kittyPlacement(imageID, w, h) + kittyPlaceholders(imageID, w, h)
 		}

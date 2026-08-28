@@ -35,7 +35,7 @@ func clearPosterEnv(t *testing.T) map[string]string {
 	prev := make(map[string]string, len(keys))
 	for _, k := range keys {
 		prev[k] = os.Getenv(k)
-		os.Unsetenv(k)
+		_ = os.Unsetenv(k)
 	}
 	return prev
 }
@@ -45,9 +45,9 @@ func restorePosterEnv(t *testing.T, prev map[string]string) {
 	t.Helper()
 	for k, v := range prev {
 		if v == "" {
-			os.Unsetenv(k)
+			_ = os.Unsetenv(k)
 		} else {
-			os.Setenv(k, v)
+			_ = os.Setenv(k, v)
 		}
 	}
 }
@@ -70,8 +70,8 @@ func TestRenderPosterASCII(t *testing.T) {
 func TestRenderPosterKitty(t *testing.T) {
 	prev := clearPosterEnv(t)
 	defer restorePosterEnv(t, prev)
-	os.Setenv("TERM", "xterm-kitty")
-	defer os.Unsetenv("TERM")
+	_ = os.Setenv("TERM", "xterm-kitty")
+	defer func() { _ = os.Unsetenv("TERM") }()
 	if !tui.SupportsKittyImage() {
 		t.Skip("kitty not detected")
 	}
@@ -104,8 +104,8 @@ func TestPosterURLPrefersMoviePosterOverSeriesPoster(t *testing.T) {
 func TestSupportsKittyImageDetectsZellij(t *testing.T) {
 	prev := clearPosterEnv(t)
 	defer restorePosterEnv(t, prev)
-	os.Setenv("TERM", "xterm-kitty")
-	os.Setenv("ZELLIJ_SESSION_NAME", "test-session")
+	_ = os.Setenv("TERM", "xterm-kitty")
+	_ = os.Setenv("ZELLIJ_SESSION_NAME", "test-session")
 	if tui.SupportsKittyImage() {
 		t.Fatal("kitty should be disabled inside Zellij")
 	}
@@ -114,8 +114,8 @@ func TestSupportsKittyImageDetectsZellij(t *testing.T) {
 func TestSupportsKittyImageDetectsTmux(t *testing.T) {
 	prev := clearPosterEnv(t)
 	defer restorePosterEnv(t, prev)
-	os.Setenv("KITTY_WINDOW_ID", "1")
-	os.Setenv("TMUX", "/tmp/tmux-1000/default")
+	_ = os.Setenv("KITTY_WINDOW_ID", "1")
+	_ = os.Setenv("TMUX", "/tmp/tmux-1000/default")
 	if tui.SupportsKittyImage() {
 		t.Fatal("kitty should be disabled inside tmux")
 	}
@@ -124,8 +124,8 @@ func TestSupportsKittyImageDetectsTmux(t *testing.T) {
 func TestSupportsKittyImageDetectsScreen(t *testing.T) {
 	prev := clearPosterEnv(t)
 	defer restorePosterEnv(t, prev)
-	os.Setenv("TERM", "xterm-kitty")
-	os.Setenv("STY", "12345.pts-0")
+	_ = os.Setenv("TERM", "xterm-kitty")
+	_ = os.Setenv("STY", "12345.pts-0")
 	if tui.SupportsKittyImage() {
 		t.Fatal("kitty should be disabled inside screen")
 	}
@@ -134,7 +134,7 @@ func TestSupportsKittyImageDetectsScreen(t *testing.T) {
 func TestSupportsKittyImageEnabledNatively(t *testing.T) {
 	prev := clearPosterEnv(t)
 	defer restorePosterEnv(t, prev)
-	os.Setenv("KITTY_WINDOW_ID", "1")
+	_ = os.Setenv("KITTY_WINDOW_ID", "1")
 	if !tui.SupportsKittyImage() {
 		t.Fatal("kitty should be enabled outside multiplexers")
 	}
