@@ -110,3 +110,19 @@ func TestPlexFindBestMedia(t *testing.T) {
 		t.Errorf("findBestMedia() width = %d; want 3840", best.Width)
 	}
 }
+
+func TestPlexMediaURLNormalizesRelativeAndAbsolutePaths(t *testing.T) {
+	item := mapMovie(Metadata{
+		RatingKey: "movie",
+		Type:      "movie",
+		Thumb:     "https://cdn.example/poster.jpg",
+		Art:       "/library/art",
+	}, "http://plex.example:32400/")
+
+	if item.ThumbURL != "https://cdn.example/poster.jpg" {
+		t.Fatalf("absolute poster URL = %q", item.ThumbURL)
+	}
+	if item.ArtURL != "http://plex.example:32400/library/art" {
+		t.Fatalf("relative art URL = %q", item.ArtURL)
+	}
+}

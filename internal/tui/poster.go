@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
 	"github.com/SuperCoolPencil/cue/internal/mediaserver"
@@ -23,8 +24,9 @@ import (
 
 const (
 	// posterMaxWidth caps the rendered poster width in cells.
-	posterMaxWidth = 44
-	posterMinWidth = 20
+	posterMaxWidth      = 44
+	posterMinWidth      = 20
+	posterFetchAttempts = 3
 
 	// kitty cell pixel estimates used to size transmitted images.
 	kittyCellWpx = 8
@@ -48,11 +50,14 @@ func SupportsKittyImage() bool {
 func PosterURL(item interface{}) string {
 	switch v := item.(type) {
 	case *domain.MediaItem:
-		if v.ShowThumbURL != "" {
+		if v.Type == domain.MediaTypeEpisode && v.ShowThumbURL != "" {
 			return v.ShowThumbURL
 		}
 		if v.ThumbURL != "" {
 			return v.ThumbURL
+		}
+		if v.ShowThumbURL != "" {
+			return v.ShowThumbURL
 		}
 		return v.ArtURL
 	case *domain.Show:
@@ -71,7 +76,7 @@ func PosterURL(item interface{}) string {
 // the placement on every render, so the image survives redraws.
 func RenderPoster(data []byte, itemID string, widthCells int) string {
 	if SupportsKittyImage() {
-		pngBytes, imageID, w, h, err := renderKitty(data, itemID, widthCells)
+		pngBytes, imageID, w, h, err := renderKitty(data, itemID, 0, widthCells, 0)
 		if err == nil {
 			// Transmit the pixels once. The placement (returned below) is
 			// re-emitted on each frame, keeping the image visible.
@@ -79,25 +84,33 @@ func RenderPoster(data []byte, itemID string, widthCells int) string {
 			return kittyPlacement(imageID, w, h) + kittyPlaceholders(imageID, w, h)
 		}
 	}
-	s, err := renderASCII(data, widthCells)
+	s, err := renderASCII(data, widthCells, 0)
 	if err != nil {
 		return ""
 	}
 	return s
 }
 
-func renderASCII(data []byte, widthCells int) (string, error) {
+func renderASCII(data []byte, widthCells, maxHeightCells int) (string, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
 	// "halfcell" mode doubles vertical resolution using block characters.
-	return gopixels.FromImageStream(img, widthCells, 0, "halfcell", true)
+	content, err := gopixels.FromImageStream(img, widthCells, 0, "halfcell", true)
+	if err != nil || maxHeightCells <= 0 {
+		return content, err
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > maxHeightCells {
+		content = strings.Join(lines[:maxHeightCells], "\n")
+	}
+	return content, nil
 }
 
 // renderKitty decodes and resizes the image for kitty transmission and
 // returns the PNG bytes plus the display dimensions in cells.
-func renderKitty(data []byte, itemID string, widthCells int) (pngBytes []byte, imageID uint32, wCells, hCells int, err error) {
+func renderKitty(data []byte, itemID string, requestID uint64, widthCells, maxHeightCells int) (pngBytes []byte, imageID uint32, wCells, hCells int, err error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -108,6 +121,15 @@ func renderKitty(data []byte, itemID string, widthCells int) (pngBytes []byte, i
 	}
 	dispW := widthCells * kittyCellWpx
 	dispH := (dispW * b.Dy()) / b.Dx()
+	if maxHeightCells > 0 && dispH > maxHeightCells*kittyCellHpx {
+		maxWidth := (maxHeightCells * kittyCellHpx * b.Dx()) / b.Dy()
+		widthCells = maxWidth / kittyCellWpx
+		if widthCells < 1 {
+			widthCells = 1
+		}
+		dispW = widthCells * kittyCellWpx
+		dispH = (dispW * b.Dy()) / b.Dx()
+	}
 	if dispH < 1 {
 		dispH = 1
 	}
@@ -118,16 +140,27 @@ func renderKitty(data []byte, itemID string, widthCells int) (pngBytes []byte, i
 		return nil, 0, 0, 0, err
 	}
 
-	heightCells := dispH / kittyCellHpx
+	heightCells := (dispH + kittyCellHpx - 1) / kittyCellHpx
 	if heightCells < 1 {
 		heightCells = 1
 	}
-	return buf.Bytes(), kittyImageID(itemID), widthCells, heightCells, nil
+	if maxHeightCells > 0 && heightCells > maxHeightCells {
+		heightCells = maxHeightCells
+	}
+	return buf.Bytes(), kittyImageID(itemID, requestID), widthCells, heightCells, nil
 }
 
-// kittyImageID derives a stable numeric image ID for the kitty graphics
-// protocol from the item identifier.
-func kittyImageID(itemID string) uint32 {
+// kittyImageID returns a request-specific ID for fetched posters. Using a new
+// ID for every request prevents the terminal from reusing stale image data.
+// requestID is zero for the standalone RenderPoster helper, where an item
+// stable ID is still useful.
+func kittyImageID(itemID string, requestID uint64) uint32 {
+	if requestID != 0 {
+		id := uint32(requestID)
+		if id != 0 {
+			return id
+		}
+	}
 	if itemID == "" {
 		return 1
 	}
@@ -233,20 +266,33 @@ func kittyPlaceholders(imageID uint32, widthCells, heightCells int) string {
 	return sb.String()
 }
 
+// deleteKittyImage removes a previously uploaded image from the terminal.
+// This prevents an old virtual placement from remaining visible when a new
+// selection has no poster or while its replacement is loading.
+func deleteKittyImage(output io.Writer, imageID uint32) {
+	if imageID == 0 {
+		return
+	}
+	if output == nil {
+		output = os.Stdout
+	}
+	_, _ = io.WriteString(output, fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", imageID))
+}
+
 // FetchPosterCmd returns a command that downloads and renders the poster for
 // the given item, emitting a PosterLoadedMsg on success.
-func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, itemID, url string, widthCells int) tea.Cmd {
-	if url == "" {
+func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID uint64, itemID, url string, widthCells, maxHeightCells int) tea.Cmd {
+	if client == nil || (url == "" && itemID == "") {
 		return nil
 	}
 	return func() tea.Msg {
-		data, err := client.GetImage(context.Background(), url)
+		data, err := fetchPosterData(client, itemID, url)
 		if err != nil {
 			return nil
 		}
 
 		if SupportsKittyImage() {
-			pngBytes, imageID, w, h, err := renderKitty(data, itemID, widthCells)
+			pngBytes, imageID, w, h, err := renderKitty(data, itemID, requestID, widthCells, maxHeightCells)
 			if err == nil {
 				// Transmit the pixels once. The placement + placeholders are
 				// rendered in the View; on subsequent frames only placeholders
@@ -258,17 +304,52 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, itemID, ur
 					return nil
 				}
 				return PosterLoadedMsg{
+					RequestID: requestID,
 					ItemID:    itemID,
 					Content:   kittyPlaceholders(imageID, w, h),
 					Placement: kittyPlacement(imageID, w, h),
+					ImageID:   imageID,
 				}
 			}
 		}
 
-		content, err := renderASCII(data, widthCells)
+		content, err := renderASCII(data, widthCells, maxHeightCells)
 		if err != nil || content == "" {
 			return nil
 		}
-		return PosterLoadedMsg{ItemID: itemID, Content: content}
+		return PosterLoadedMsg{RequestID: requestID, ItemID: itemID, Content: content}
 	}
+}
+
+// fetchPosterData retries short-lived network failures and bounds each HTTP
+// request so a stalled image server cannot leave the poster permanently stuck.
+func fetchPosterData(client mediaserver.MediaSource, itemID, url string) ([]byte, error) {
+	requestURL := url
+	if requestURL == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		item, err := client.GetMediaItem(ctx, itemID)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		requestURL = PosterURL(item)
+		if requestURL == "" {
+			return nil, fmt.Errorf("no poster URL for item %s", itemID)
+		}
+	}
+
+	var data []byte
+	var err error
+	for attempt := 0; attempt < posterFetchAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		data, err = client.GetImage(ctx, requestURL)
+		cancel()
+		if err == nil {
+			return data, nil
+		}
+		if attempt+1 < posterFetchAttempts {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return nil, err
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SuperCoolPencil/cue/internal/domain"
 	"github.com/SuperCoolPencil/cue/internal/tui"
 )
 
@@ -58,5 +59,16 @@ func TestRenderPosterKitty(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(out), []byte("\u0305")) {
 		t.Fatalf("kitty poster missing row/column diacritics")
+	}
+}
+
+func TestPosterURLPrefersMoviePosterOverSeriesPoster(t *testing.T) {
+	movie := &domain.MediaItem{
+		Type:         domain.MediaTypeMovie,
+		ThumbURL:     "movie-poster",
+		ShowThumbURL: "series-poster",
+	}
+	if got := tui.PosterURL(movie); got != "movie-poster" {
+		t.Fatalf("movie poster URL = %q", got)
 	}
 }
