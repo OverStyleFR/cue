@@ -136,6 +136,16 @@ func (i Inspector) View() string {
 	footerLines := splitLines(content.footer)
 	bodyLines := splitLines(content.body)
 
+	// Guard against the header (poster + metadata) growing taller than the
+	// panel. We always keep at least one body line plus the scroll indicators.
+	maxHeaderLines := i.maxVisible - len(footerLines) - 1
+	if maxHeaderLines < 0 {
+		maxHeaderLines = 0
+	}
+	if len(headerLines) > maxHeaderLines {
+		headerLines = headerLines[:maxHeaderLines]
+	}
+
 	// Calculate available space for body
 	availableForBody := i.maxVisible - len(headerLines) - len(footerLines)
 	if availableForBody < 1 {

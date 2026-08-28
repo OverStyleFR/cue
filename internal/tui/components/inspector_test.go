@@ -60,3 +60,26 @@ func TestInspectorEpisodeRendering(t *testing.T) {
 		t.Errorf("view does not contain air date; got:\n%s", view)
 	}
 }
+
+func TestInspectorTruncatesOversizedHeader(t *testing.T) {
+	i := NewInspector()
+	i.SetSize(40, 12)
+
+	// Create a poster that would naturally occupy far more lines than the panel.
+	bigPoster := strings.Repeat("poster line\n", 20)
+	bigPoster = strings.TrimSuffix(bigPoster, "\n")
+
+	i.SetItem(&domain.MediaItem{ID: "movie-1", Type: domain.MediaTypeMovie, Title: "Movie"})
+	i.SetPoster(bigPoster)
+
+	view := i.View()
+	lines := strings.Split(view, "\n")
+	// Interior height = outer height (12) - border (2) = 10 lines.
+	if len(lines) > 12 {
+		t.Fatalf("inspector view has %d lines, expected at most 12; got:\n%s", len(lines), view)
+	}
+	// The panel should still render the title and at least some of the poster.
+	if !strings.Contains(view, "Info") {
+		t.Fatalf("inspector view missing title; got:\n%s", view)
+	}
+}
