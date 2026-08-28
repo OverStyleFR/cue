@@ -351,9 +351,14 @@ func (c *ListColumn) SetItems(rawItems interface{}) {
 		c.items = WrapLibraries(v)
 		c.columnType = ColumnTypeLibraries
 	case []*domain.MediaItem:
-		// Could be movies, episodes, or playlist items - preserve column type if already set
+		// Could be movies, episodes, or playlist items - preserve column type if already set.
 		if c.columnType == ColumnTypePlaylistItems {
 			c.items = WrapPlaylistItems(v)
+		} else if mediaItemsAreMixed(v) {
+			// Continue Watching can contain both movies and episodes. Keep it mixed
+			// instead of selecting a renderer based solely on the first item.
+			c.items = WrapMovies(v)
+			c.columnType = ColumnTypeMixed
 		} else if len(v) > 0 && v[0].Type == domain.MediaTypeEpisode {
 			c.items = WrapEpisodes(v)
 			c.columnType = ColumnTypeEpisodes
@@ -1326,9 +1331,12 @@ func (c *ListColumn) renderMixedItem(item domain.ListItem, selected bool, width 
 		indicatorChar = " "
 	}
 
-	// Build title with year
+	// Build title with year. A Continue Watching column can contain both
+	// movies and episodes, so format episodes with their series context here too.
 	title := item.GetTitle()
-	if year := item.GetYear(); year > 0 {
+	if mediaItem, ok := item.(*domain.MediaItem); ok && c.showShowTitle && mediaItem.Type == domain.MediaTypeEpisode && mediaItem.ShowTitle != "" {
+		title = fmt.Sprintf("%s - %s %s", mediaItem.ShowTitle, mediaItem.EpisodeCode(), mediaItem.Title)
+	} else if year := item.GetYear(); year > 0 {
 		title = fmt.Sprintf("%s (%d)", title, year)
 	}
 
@@ -1349,6 +1357,21 @@ func (c *ListColumn) renderMixedItem(item domain.ListItem, selected bool, width 
 	}, tag, width)
 
 	return styles.RenderListRow(parts, selected, width)
+}
+
+// mediaItemsAreMixed reports whether a media slice contains more than one type.
+func mediaItemsAreMixed(items []*domain.MediaItem) bool {
+	if len(items) < 2 {
+		return false
+	}
+
+	firstType := items[0].Type
+	for _, item := range items[1:] {
+		if item.Type != firstType {
+			return true
+		}
+	}
+	return false
 }
 
 // sortTag returns a right-aligned tag string for the current sort field, or "" if
