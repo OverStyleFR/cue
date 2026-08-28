@@ -141,6 +141,7 @@ type Model struct {
 	LibraryStates map[string]components.LibrarySyncState // Tracks progress per library
 	SyncingCount  int                                    // Libraries still syncing
 	MultiLibSync  bool                                   // True when syncing multiple libraries (R / startup)
+	SyncGen       int                                    // Current sync generation; messages from older generations are dropped
 
 	// Navigation plan for deep linking
 	navPlan *NavPlan
@@ -250,6 +251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LibrariesLoadedMsg:
 		m.Libraries = msg.Libraries
+		m.SyncGen++
 
 		// Initialize all states to Syncing (including playlists)
 		m.LibraryStates = make(map[string]components.LibrarySyncState)
@@ -271,8 +273,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Start parallel sync of ALL libraries + playlists
 		m.Loading = true
 		return m, tea.Batch(
-			SyncAllLibrariesCmd(m.LibraryService, msg.Libraries),
-			SyncPlaylistsCmd(m.PlaylistService, playlistsLibraryID),
+			SyncAllLibrariesCmd(m.LibraryService, msg.Libraries, m.SyncGen),
+			SyncPlaylistsCmd(m.PlaylistService, playlistsLibraryID, m.SyncGen),
 		)
 
 	case MoviesLoadedMsg:
@@ -819,13 +821,13 @@ func (m *Model) refreshCurrentView() tea.Cmd {
 	case components.ColumnTypeMovies:
 		if libCol := m.libraryColumn(); libCol != nil {
 			if lib := libCol.SelectedLibrary(); lib != nil {
-				cmds = append(cmds, LoadMoviesCmd(m.LibraryService, lib.ID))
+				cmds = append(cmds, LoadMoviesCmd(m.LibraryService, *lib))
 			}
 		}
 	case components.ColumnTypeShows:
 		if libCol := m.libraryColumn(); libCol != nil {
 			if lib := libCol.SelectedLibrary(); lib != nil {
-				cmds = append(cmds, LoadShowsCmd(m.LibraryService, lib.ID))
+				cmds = append(cmds, LoadShowsCmd(m.LibraryService, *lib))
 			}
 		}
 	case components.ColumnTypeSeasons:
@@ -844,19 +846,23 @@ func (m *Model) refreshCurrentView() tea.Cmd {
 		}
 		// ALSO reload the parent (Shows) to update counters
 		if showCol := m.ColumnStack.Get(m.ColumnStack.Len() - 3); showCol != nil && showCol.ColumnType() == components.ColumnTypeShows {
-			cmds = append(cmds, LoadShowsCmd(m.LibraryService, m.currentLibID))
+			if lib := m.findLibrary(m.currentLibID); lib != nil {
+				cmds = append(cmds, LoadShowsCmd(m.LibraryService, *lib))
+			}
 		}
 	case components.ColumnTypeSeasonEpisodes:
 		// Collapsible view: reload seasons for the show
 		cmds = append(cmds, LoadSeasonsCmd(m.LibraryService, m.currentLibID, m.currentShowID))
 		// ALSO reload the parent (Shows) to update counters
 		if showCol := m.ColumnStack.Get(m.ColumnStack.Len() - 2); showCol != nil && showCol.ColumnType() == components.ColumnTypeShows {
-			cmds = append(cmds, LoadShowsCmd(m.LibraryService, m.currentLibID))
+			if lib := m.findLibrary(m.currentLibID); lib != nil {
+				cmds = append(cmds, LoadShowsCmd(m.LibraryService, *lib))
+			}
 		}
 	case components.ColumnTypeMixed:
 		if libCol := m.libraryColumn(); libCol != nil {
 			if lib := libCol.SelectedLibrary(); lib != nil {
-				cmds = append(cmds, LoadMixedLibraryCmd(m.LibraryService, lib.ID))
+				cmds = append(cmds, LoadMixedLibraryCmd(m.LibraryService, *lib))
 			}
 		}
 	}
