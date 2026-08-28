@@ -13,6 +13,10 @@ import (
 func TestMoviePosterAppearsInView(t *testing.T) {
 	os.Unsetenv("KITTY_WINDOW_ID")
 	os.Unsetenv("TERM")
+	os.Unsetenv("ZELLIJ")
+	os.Unsetenv("ZELLIJ_SESSION_NAME")
+	os.Unsetenv("TMUX")
+	os.Unsetenv("STY")
 	if SupportsKittyImage() {
 		t.Skip("kitty env detected; testing ASCII path only")
 	}
