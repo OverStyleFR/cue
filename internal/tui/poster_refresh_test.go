@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"strings"
 	"testing"
 
@@ -131,5 +132,25 @@ func TestRenderASCIIFitsMaxHeight(t *testing.T) {
 	lines := strings.Split(out, "\n")
 	if len(lines) > 5 {
 		t.Fatalf("ASCII poster has %d lines, expected at most 5; got:\n%s", len(lines), out)
+	}
+}
+
+func TestPosterDimensionsRejectExcessivePixelCount(t *testing.T) {
+	fullDecodeCalled := false
+	image.RegisterFormat("oversized-poster-test", "OVERSIZED",
+		func(io.Reader) (image.Image, error) {
+			fullDecodeCalled = true
+			return nil, errors.New("full decode called")
+		},
+		func(io.Reader) (image.Config, error) {
+			return image.Config{Width: 8_192, Height: 8_192}, nil
+		},
+	)
+
+	if _, err := decodePoster([]byte("OVERSIZED")); err == nil || !strings.Contains(err.Error(), "dimensions") {
+		t.Fatalf("excessive poster dimensions returned %v", err)
+	}
+	if fullDecodeCalled {
+		t.Fatal("oversized poster reached full decode")
 	}
 }

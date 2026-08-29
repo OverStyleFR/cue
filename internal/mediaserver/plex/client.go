@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
+	"github.com/SuperCoolPencil/cue/internal/mediaserver/mediahttp"
 )
 
 const (
@@ -227,7 +228,7 @@ func (c *Client) GetImage(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("image request failed: status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	return mediahttp.ReadImage(resp)
 }
 
 // parseResponse parses a JSON response into APIResponse

@@ -31,6 +31,7 @@ const (
 	posterMinWidth      = 20
 	posterPreviewWidth  = 30
 	posterFetchAttempts = 3
+	maxPosterPixels     = 40_000_000
 
 	// kitty cell pixel estimates used to size transmitted images.
 	kittyCellWpx = 8
@@ -139,7 +140,7 @@ func RenderPoster(data []byte, itemID string, widthCells int) string {
 }
 
 func renderASCII(data []byte, widthCells, maxHeightCells int) (string, error) {
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodePoster(data)
 	if err != nil {
 		return "", err
 	}
@@ -159,7 +160,7 @@ func renderASCII(data []byte, widthCells, maxHeightCells int) (string, error) {
 // renderKitty decodes and resizes the image for kitty transmission and
 // returns the PNG bytes plus the display dimensions in cells.
 func renderKitty(data []byte, itemID string, requestID uint64, widthCells, maxHeightCells int) (pngBytes []byte, imageID uint32, wCells, hCells int, err error) {
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodePoster(data)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -198,6 +199,26 @@ func renderKitty(data []byte, itemID string, requestID uint64, widthCells, maxHe
 		heightCells = maxHeightCells
 	}
 	return buf.Bytes(), kittyImageID(itemID, requestID), widthCells, heightCells, nil
+}
+
+func decodePoster(data []byte) (image.Image, error) {
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePosterDimensions(config.Width, config.Height); err != nil {
+		return nil, err
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
+func validatePosterDimensions(width, height int) error {
+	if width <= 0 || height <= 0 || int64(width)*int64(height) > maxPosterPixels {
+		return fmt.Errorf("poster dimensions %dx%d exceed limit", width, height)
+	}
+	return nil
 }
 
 // cropPoster center-crops artwork to the portrait shape used by the inspector.

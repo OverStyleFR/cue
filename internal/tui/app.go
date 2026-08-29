@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -262,13 +263,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.SyncingCount = len(msg.Libraries) + 1 // +1 for playlists
 		m.MultiLibSync = true
 
-		// Create the library column as the root
-		libCol := components.NewLibraryColumn(m.allLibraryEntries())
+		libraries := m.allLibraryEntries()
+		resetStack := !msg.Refresh || m.ColumnStack == nil || m.ColumnStack.Len() == 0 ||
+			(m.currentLibID != "" && !slices.ContainsFunc(msg.Libraries, func(lib domain.Library) bool {
+				return lib.ID == m.currentLibID
+			}))
+
+		var libCol *components.ListColumn
+		if resetStack {
+			libCol = components.NewLibraryColumn(libraries)
+			if m.ColumnStack == nil {
+				m.ColumnStack = NewColumnStack()
+			}
+			m.ColumnStack.Reset(libCol)
+			if msg.Refresh {
+				m.currentLibID = ""
+				m.currentShowID = ""
+			}
+		} else {
+			libCol = m.ColumnStack.Get(0)
+			libCol.SetItems(libraries)
+		}
+
 		libCol.SetLibraryStates(m.LibraryStates)
 		libCol.SetShowWatchStatus(m.UIConfig.ShowWatchStatus)
 		libCol.SetShowLibraryCounts(m.UIConfig.ShowLibraryCounts)
 		m.Inspector.SetLibraryStates(m.LibraryStates)
-		m.ColumnStack.Reset(libCol)
 
 		// Start parallel sync of ALL libraries + playlists
 		m.Loading = true
@@ -566,6 +586,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case LibrarySyncProgressMsg:
+		if msg.Generation != m.SyncGen {
+			return m, nil
+		}
 		state := m.LibraryStates[msg.LibraryID]
 
 		if msg.Error != nil {
@@ -976,7 +999,7 @@ func (m *Model) updateInspector() tea.Cmd {
 	}
 
 	width := m.posterPreviewWidth()
-	maxHeight := m.posterMaxHeight(posterCol)
+	maxHeight := m.posterMaxHeight()
 	requestKey := strings.Join([]string{id, url, fmt.Sprint(width), fmt.Sprint(maxHeight)}, "\x00")
 	if requestKey == m.posterRequestKey {
 		return nil
@@ -1035,8 +1058,8 @@ func posterMetadataFallback(item interface{}) bool {
 	return ok
 }
 
-func (m Model) posterMaxHeight(top *components.ListColumn) int {
-	if top == nil || m.Height <= ChromeHeight {
+func (m Model) posterMaxHeight() int {
+	if m.Height <= ChromeHeight {
 		return 0
 	}
 

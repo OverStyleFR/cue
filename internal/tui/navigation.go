@@ -87,7 +87,7 @@ func (m *Model) pushAndLoadColumn(spec columnLoadSpec, cursor int) *drillResult 
 			return &drillResult{
 				AwaitKind: spec.awaitKind,
 				AwaitID:   spec.awaitID,
-				Cmd:       m.advanceNavPlanAfterLoad(spec.awaitKind, spec.awaitID),
+				Cmd:       tea.Batch(pc, m.advanceNavPlanAfterLoad(spec.awaitKind, spec.awaitID)),
 			}
 		}
 		return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
@@ -339,11 +339,11 @@ func (m *Model) drillSelected() *drillResult {
 		m.updateLayout()
 
 		// Check cache first
-			if cached, ok := m.Store.GetPlaylistItems(v.ID); ok {
-				col.SetItems(cached)
-				pc := m.updateInspector()
-				return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
-			}
+		if cached, ok := m.Store.GetPlaylistItems(v.ID); ok {
+			col.SetItems(cached)
+			pc := m.updateInspector()
+			return &drillResult{AwaitKind: AwaitNone, Cmd: pc}
+		}
 
 		col.SetLoading(true)
 		m.Loading = true

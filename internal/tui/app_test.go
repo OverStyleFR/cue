@@ -55,6 +55,83 @@ func TestModelPropagateWatchStatus(t *testing.T) {
 	}
 }
 
+func TestRefreshLibrariesPreservesValidNavigationStack(t *testing.T) {
+	root := components.NewLibraryColumn([]domain.Library{{ID: "lib-1", Name: "Movies", Type: "movie"}})
+	content := components.NewListColumn(components.ColumnTypeMovies, "Movies")
+	stack := NewColumnStack()
+	stack.Push(root, 0)
+	stack.Push(content, 0)
+
+	m := Model{ColumnStack: stack, currentLibID: "lib-1"}
+	model, _ := m.Update(LibrariesLoadedMsg{
+		Libraries: []domain.Library{{ID: "lib-1", Name: "Renamed", Type: "movie"}},
+		Refresh:   true,
+	})
+	updated := model.(Model)
+	if updated.ColumnStack.Len() != 2 || updated.ColumnStack.Get(1) != content {
+		t.Fatal("refresh discarded valid deeper navigation")
+	}
+}
+
+func TestRefreshLibrariesResetsStackWhenCurrentLibraryDisappears(t *testing.T) {
+	stack := NewColumnStack()
+	stack.Push(components.NewLibraryColumn([]domain.Library{{ID: "lib-1", Name: "Movies", Type: "movie"}}), 0)
+	stack.Push(components.NewListColumn(components.ColumnTypeMovies, "Movies"), 0)
+
+	m := Model{ColumnStack: stack, currentLibID: "lib-1", currentShowID: "show-1"}
+	model, _ := m.Update(LibrariesLoadedMsg{Refresh: true})
+	updated := model.(Model)
+	if updated.ColumnStack.Len() != 1 || updated.currentLibID != "" || updated.currentShowID != "" {
+		t.Fatal("refresh retained navigation for a removed library")
+	}
+}
+
+func TestLibrarySyncProgressDropsStaleGeneration(t *testing.T) {
+	m := Model{
+		SyncGen:      2,
+		SyncingCount: 1,
+		LibraryStates: map[string]components.LibrarySyncState{
+			"lib-1": {Status: components.StatusSyncing},
+		},
+	}
+	model, cmd := m.Update(LibrarySyncProgressMsg{
+		LibraryID:  "lib-1",
+		Generation: 1,
+		Done:       true,
+	})
+	updated := model.(Model)
+	if cmd != nil || updated.SyncingCount != 1 || updated.LibraryStates["lib-1"].Status != components.StatusSyncing {
+		t.Fatal("stale sync progress mutated current generation")
+	}
+}
+
+func TestCachedNavPlanKeepsPosterCommand(t *testing.T) {
+	m := Model{
+		ColumnStack: NewColumnStack(),
+		Inspector:   components.NewInspector(),
+		MediaClient: &posterClientStub{},
+		Width:       100,
+		Height:      30,
+		navPlan: &NavPlan{
+			Targets:   []NavTarget{{ID: "show-1"}},
+			AwaitKind: AwaitShows,
+			AwaitID:   "lib-1",
+		},
+	}
+	result := m.pushAndLoadColumn(columnLoadSpec{
+		colType:   components.ColumnTypeShows,
+		name:      "Shows",
+		awaitKind: AwaitShows,
+		awaitID:   "lib-1",
+		getCached: func() interface{} {
+			return []*domain.Show{{ID: "show-1", ThumbURL: "https://media/poster"}}
+		},
+	}, 0)
+	if result == nil || result.Cmd == nil {
+		t.Fatal("cached nav-plan path discarded poster command")
+	}
+}
+
 func TestUpdateInspectorReloadsPosterWhenRequestKeyChanges(t *testing.T) {
 	col := components.NewListColumn(components.ColumnTypeShows, "Shows")
 	col.SetItems([]*domain.Show{{ID: "show-1", ThumbURL: "https://media/poster-a"}})
@@ -220,54 +297,9 @@ func TestUpdateInspectorClearsPosterWithoutArtwork(t *testing.T) {
 	}
 }
 
-func TestPosterMaxHeightFitsMovieInspector(t *testing.T) {
-	movieCol := components.NewListColumn(components.ColumnTypeMovies, "Movies")
-	movieCol.SetItems([]*domain.MediaItem{{
-		ID:    "movie-1",
-		Type:  domain.MediaTypeMovie,
-		Title: "Movie",
-		// Technical footer is rendered for movies.
-		VideoCodec: "H.264",
-		AudioCodec: "AAC",
-	}})
-	movieCol.SetSize(50, 20)
-
-	m := Model{
-		ColumnStack: NewColumnStack(),
-		Height:      30,
-	}
-	m.ColumnStack.Push(movieCol, 0)
-
-	maxHeight := m.posterMaxHeight(movieCol)
-	contentHeight := m.Height - ChromeHeight
-	infoHeight := contentHeight - contentHeight/3
-	if maxHeight <= 0 || maxHeight >= infoHeight {
-		t.Fatalf("movie poster maxHeight = %d, expected 0 < maxHeight < infoHeight %d", maxHeight, infoHeight)
-	}
-}
-
-func TestPosterMaxHeightFitsEpisodeInspector(t *testing.T) {
-	epCol := components.NewListColumn(components.ColumnTypeEpisodes, "Episodes")
-	epCol.SetItems([]*domain.MediaItem{{
-		ID:       "ep-1",
-		Type:     domain.MediaTypeEpisode,
-		Title:    "Episode",
-		ParentID: "season-1",
-		ShowID:   "show-1",
-	}})
-	epCol.SetSize(50, 20)
-
-	m := Model{
-		ColumnStack: NewColumnStack(),
-		Height:      30,
-	}
-	m.ColumnStack.Push(epCol, 0)
-
-	maxHeight := m.posterMaxHeight(epCol)
-	contentHeight := m.Height - ChromeHeight
-	listHeight := (55 * contentHeight) / 100
-	infoHeight := contentHeight - listHeight
-	if maxHeight <= 0 || maxHeight >= infoHeight {
-		t.Fatalf("episode poster maxHeight = %d, expected 0 < maxHeight < infoHeight %d", maxHeight, infoHeight)
+func TestPosterMaxHeightFitsPreviewPane(t *testing.T) {
+	m := Model{Height: 30}
+	if got, want := m.posterMaxHeight(), 11; got != want {
+		t.Fatalf("poster maxHeight = %d, want %d", got, want)
 	}
 }
