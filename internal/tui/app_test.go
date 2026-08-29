@@ -55,8 +55,8 @@ func TestModelPropagateWatchStatus(t *testing.T) {
 }
 
 func TestUpdateInspectorReloadsPosterWhenRequestKeyChanges(t *testing.T) {
-	col := components.NewListColumn(components.ColumnTypeMovies, "Movies")
-	col.SetItems([]*domain.MediaItem{{ID: "movie-1", ThumbURL: "https://media/poster-a"}})
+	col := components.NewListColumn(components.ColumnTypeShows, "Shows")
+	col.SetItems([]*domain.Show{{ID: "show-1", ThumbURL: "https://media/poster-a"}})
 	col.SetSize(50, 20)
 
 	m := Model{
@@ -71,7 +71,7 @@ func TestUpdateInspectorReloadsPosterWhenRequestKeyChanges(t *testing.T) {
 	}
 	firstRequestID := m.posterRequestID
 
-	col.SetItems([]*domain.MediaItem{{ID: "movie-1", ThumbURL: "https://media/poster-b"}})
+	col.SetItems([]*domain.Show{{ID: "show-1", ThumbURL: "https://media/poster-b"}})
 	m.posterContent = "old poster"
 	if cmd := m.updateInspector(); cmd == nil {
 		t.Fatal("expected a new poster request after the URL changed")
@@ -84,9 +84,9 @@ func TestUpdateInspectorReloadsPosterWhenRequestKeyChanges(t *testing.T) {
 	}
 }
 
-func TestUpdateInspectorReloadsPosterWhenWidthChanges(t *testing.T) {
-	col := components.NewListColumn(components.ColumnTypeMovies, "Movies")
-	col.SetItems([]*domain.MediaItem{{ID: "movie-1", ThumbURL: "https://media/poster"}})
+func TestUpdateInspectorDoesNotReloadSidebarPosterWhenWidthChanges(t *testing.T) {
+	col := components.NewListColumn(components.ColumnTypeShows, "Shows")
+	col.SetItems([]*domain.Show{{ID: "show-1", ThumbURL: "https://media/poster"}})
 	col.SetSize(40, 20)
 
 	m := Model{
@@ -102,11 +102,59 @@ func TestUpdateInspectorReloadsPosterWhenWidthChanges(t *testing.T) {
 	firstRequestID := m.posterRequestID
 
 	col.SetSize(70, 20)
-	if cmd := m.updateInspector(); cmd == nil {
-		t.Fatal("expected a new poster request after the width changed")
+	if cmd := m.updateInspector(); cmd != nil {
+		t.Fatal("unexpected poster request after a width change")
 	}
-	if m.posterRequestID == firstRequestID {
-		t.Fatal("poster request generation did not advance after resize")
+	if m.posterRequestID != firstRequestID {
+		t.Fatal("poster request generation changed after resize")
+	}
+}
+
+func TestUpdateInspectorDoesNotRequestPosterForEpisodePane(t *testing.T) {
+	col := components.NewListColumn(components.ColumnTypeEpisodes, "Episodes")
+	col.SetItems([]*domain.MediaItem{{ID: "episode-1", Type: domain.MediaTypeEpisode, ShowThumbURL: "https://media/poster"}})
+
+	m := Model{
+		ColumnStack:      NewColumnStack(),
+		Inspector:        components.NewInspector(),
+		MediaClient:      &posterClientStub{},
+		posterItemID:     "show-1",
+		posterContent:    "old poster",
+		posterRequestKey: "show-1\x00old-url\x0020\x0010",
+	}
+	m.ColumnStack.Push(col, 0)
+
+	if cmd := m.updateInspector(); cmd != nil {
+		t.Fatal("unexpected poster request for episode pane")
+	}
+	if m.hasPosterState() {
+		t.Fatal("episode pane retained a show poster")
+	}
+}
+
+func TestUpdateInspectorRetainsShowPreviewInEpisodePane(t *testing.T) {
+	showCol := components.NewListColumn(components.ColumnTypeShows, "Shows")
+	showCol.SetItems([]*domain.Show{{ID: "show-1", ThumbURL: "https://media/show-poster"}})
+	episodeCol := components.NewListColumn(components.ColumnTypeEpisodes, "Episodes")
+	episodeCol.SetItems([]*domain.MediaItem{{ID: "episode-1", Type: domain.MediaTypeEpisode}})
+
+	m := Model{
+		ColumnStack: NewColumnStack(),
+		Inspector:   components.NewInspector(),
+		MediaClient: &posterClientStub{},
+	}
+	m.ColumnStack.Push(showCol, 0)
+	if cmd := m.updateInspector(); cmd == nil {
+		t.Fatal("expected initial show poster request")
+	}
+	m.posterContent = "show poster"
+	m.ColumnStack.Push(episodeCol, 0)
+
+	if cmd := m.updateInspector(); cmd != nil {
+		t.Fatal("unexpected poster request after opening episode pane")
+	}
+	if m.posterItemID != "show-1" || m.posterContent != "show poster" {
+		t.Fatal("episode pane did not retain the selected show's preview")
 	}
 }
 

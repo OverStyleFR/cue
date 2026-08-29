@@ -96,6 +96,22 @@ func TestRenderKittyFitsInspectorHeight(t *testing.T) {
 	}
 }
 
+func TestRenderKittyCropsWideArtworkToPosterShape(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 240, 80))
+	var data bytes.Buffer
+	if err := png.Encode(&data, img); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, width, height, err := renderKitty(data.Bytes(), "show-1", 1, 20, 0)
+	if err != nil {
+		t.Fatalf("renderKitty() error = %v", err)
+	}
+	if width != 20 || height < 15 {
+		t.Fatalf("wide artwork rendered as %dx%d cells, expected a 20x15-or-taller poster", width, height)
+	}
+}
+
 func TestRenderASCIIFitsMaxHeight(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 80, 120))
 	for y := 0; y < 120; y++ {

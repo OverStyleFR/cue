@@ -83,3 +83,18 @@ func TestInspectorTruncatesOversizedHeader(t *testing.T) {
 		t.Fatalf("inspector view missing title; got:\n%s", view)
 	}
 }
+
+func TestInspectorPlacesPosterBesideMetadata(t *testing.T) {
+	i := NewInspector()
+	i.SetSize(60, 14)
+	i.SetItem(&domain.MediaItem{ID: "movie-1", Type: domain.MediaTypeMovie, Title: "Side-by-side metadata"})
+	i.SetPoster("POSTER\nPOSTER")
+
+	view := i.View()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "POSTER") && strings.Contains(line, "Side-by-side") {
+			return
+		}
+	}
+	t.Fatalf("poster and metadata were not rendered side-by-side; got:\n%s", view)
+}

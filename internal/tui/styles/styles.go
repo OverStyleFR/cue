@@ -19,11 +19,13 @@ var (
 var (
 	ActiveBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(PlexOrange)
+			BorderForeground(PlexOrange).
+			PaddingLeft(1)
 
 	InactiveBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(DimGray)
+			BorderForeground(DimGray).
+			PaddingLeft(1)
 
 	NoBorder = lipgloss.NewStyle().
 			Border(lipgloss.HiddenBorder())

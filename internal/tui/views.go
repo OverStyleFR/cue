@@ -84,11 +84,10 @@ func (m Model) View() string {
 			}
 
 		case 2:
-			// Tab 1: library list (full height)
+			// Tab 1: library list and artwork preview
 			// Tab 2: content column (split 33/66 or full)
 			libCol := m.ColumnStack.Get(0)
-			libCol.SetSize(layout.parentWidth, contentHeight)
-			columnViews = append(columnViews, libCol.View())
+			columnViews = append(columnViews, m.renderLibraryColumn(libCol, layout.parentWidth, contentHeight))
 
 			contentCol := m.ColumnStack.Get(1)
 			if canSplit {
@@ -99,16 +98,15 @@ func (m Model) View() string {
 			}
 
 		default:
-			// Tab 1: library list (full height)
+			// Tab 1: library list and artwork preview
 			// Tab 2: shows/movies column (full height if 3-col visible, else split)
 			// Tab 3: episodes/season-episodes column (split)
 			libCol := m.ColumnStack.Get(topIdx - 2)
+			libWidth := layout.parentWidth
 			if layout.grandparentWidth > 0 {
-				libCol.SetSize(layout.grandparentWidth, contentHeight)
-			} else {
-				libCol.SetSize(layout.parentWidth, contentHeight)
+				libWidth = layout.grandparentWidth
 			}
-			columnViews = append(columnViews, libCol.View())
+			columnViews = append(columnViews, m.renderLibraryColumn(libCol, libWidth, contentHeight))
 
 			parentCol := m.ColumnStack.Get(topIdx - 1)
 			if canSplit {
@@ -173,7 +171,53 @@ func (m Model) View() string {
 			m.InputModal.View())
 	}
 
+	// Emit Kitty's non-printing placement only after every layout calculation.
+	// The matching Unicode placeholders are already inside the preview pane.
+	view = m.posterPlacement + view
 	return view
+}
+
+// renderLibraryColumn uses the otherwise empty lower half of the library
+// column for artwork, leaving inspectors dedicated to readable text.
+func (m Model) renderLibraryColumn(libCol *components.ListColumn, width, height int) string {
+	if height < 16 {
+		libCol.SetSize(width, height)
+		return libCol.View()
+	}
+
+	listHeight := height / 2
+	previewHeight := height - listHeight
+	libCol.SetSize(width, listHeight)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		libCol.View(),
+		m.renderPosterPreview(width, previewHeight),
+	)
+}
+
+func (m Model) renderPosterPreview(width, height int) string {
+	frameW, frameH := styles.InactiveBorder.GetFrameSize()
+	contentWidth := max(1, width-frameW)
+	contentHeight := max(1, height-frameH)
+
+	poster := ""
+	if m.posterContent != "" {
+		// Keep the Kitty placement command out of Lip Gloss measurement. APC
+		// escape sequences are not printable cells, but treating one as content
+		// can widen/tall the entire application when the image arrives.
+		poster = m.posterContent
+	}
+	if poster == "" {
+		poster = styles.DimStyle.Render("No preview available")
+	}
+
+	title := styles.AccentStyle.Render(styles.Truncate("Preview", contentWidth))
+	bodyHeight := max(1, contentHeight-2)
+	body := lipgloss.Place(contentWidth, bodyHeight, lipgloss.Center, lipgloss.Center, poster)
+	rendered := styles.InactiveBorder.
+		Width(contentWidth).
+		Height(contentHeight).
+		Render(title + "\n\n" + body)
+	return rendered
 }
 
 // renderSplitColumn renders a content column as a vertical split:
@@ -230,12 +274,6 @@ func (m Model) renderSplitColumn(col *components.ListColumn, colWidth, listHeigh
 	}
 
 	insp.SetItem(selected)
-	// Re-apply the fetched poster to this column's inspector (SetItem clears it).
-	if selected != nil {
-		if li, ok := selected.(domain.ListItem); ok && li.GetID() == m.posterItemID && m.posterContent != "" {
-			insp.SetPoster(m.posterPlacement + m.posterContent)
-		}
-	}
 	infoView := insp.View()
 
 	return lipgloss.JoinVertical(lipgloss.Left, listView, infoView)

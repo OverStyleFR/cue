@@ -951,26 +951,29 @@ func (m *Model) updateInspector() tea.Cmd {
 
 	item := top.SelectedItem()
 	m.Inspector.SetItem(item)
-	id := m.getSelectedItemID(top)
-	url := PosterURL(item)
-	if id == "" || (url == "" && !posterMetadataFallback(item)) {
+
+	// The inspector follows the active column, while the preview follows the
+	// nearest movie/show browsing column. Opening seasons or episodes must not
+	// discard the artwork for the selected parent show.
+	posterCol := m.posterSourceColumn()
+	if posterCol == nil {
+		if m.hasPosterState() {
+			m.invalidatePoster()
+		}
+		return nil
+	}
+	posterItem := posterCol.SelectedItem()
+	id := m.getSelectedItemID(posterCol)
+	url := PosterURL(posterItem)
+	if id == "" || (url == "" && !posterMetadataFallback(posterItem)) {
 		if m.hasPosterState() {
 			m.invalidatePoster()
 		}
 		return nil
 	}
 
-	width := top.Width() - 3
-	if width <= 0 {
-		width = m.Inspector.Width() - 3
-	}
-	if width > posterMaxWidth {
-		width = posterMaxWidth
-	}
-	if width < posterMinWidth {
-		width = posterMinWidth
-	}
-	maxHeight := m.posterMaxHeight(top)
+	width := m.posterPreviewWidth()
+	maxHeight := m.posterMaxHeight(posterCol)
 	requestKey := strings.Join([]string{id, url, fmt.Sprint(width), fmt.Sprint(maxHeight)}, "\x00")
 	if requestKey == m.posterRequestKey {
 		return nil
@@ -984,6 +987,47 @@ func (m *Model) updateInspector() tea.Cmd {
 	return FetchPosterCmd(m.MediaClient, m.posterOutput, requestID, id, url, width, maxHeight)
 }
 
+func (m Model) posterSourceColumn() *components.ListColumn {
+	if m.ColumnStack == nil {
+		return nil
+	}
+	for idx := m.ColumnStack.Len() - 1; idx >= 0; idx-- {
+		col := m.ColumnStack.Get(idx)
+		if col != nil && showsPosterForColumn(col.ColumnType()) {
+			return col
+		}
+	}
+	return nil
+}
+
+func showsPosterForColumn(columnType components.ColumnType) bool {
+	switch columnType {
+	case components.ColumnTypeMovies, components.ColumnTypeShows, components.ColumnTypeMixed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) posterPreviewWidth() int {
+	if m.Width <= 0 {
+		return posterMinWidth
+	}
+	layout := m.calculateColumnLayout(m.Width)
+	width := layout.parentWidth
+	if m.ColumnStack != nil && m.ColumnStack.Len() >= 3 && layout.grandparentWidth > 0 {
+		width = layout.grandparentWidth
+	}
+	width -= 4 // preview border and a small horizontal margin
+	if width > posterPreviewWidth {
+		width = posterPreviewWidth
+	}
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
 func posterMetadataFallback(item interface{}) bool {
 	_, ok := item.(*domain.MediaItem)
 	return ok
@@ -995,31 +1039,9 @@ func (m Model) posterMaxHeight(top *components.ListColumn) int {
 	}
 
 	contentHeight := m.Height - ChromeHeight
-	listHeight := contentHeight / 3
-	if top.ColumnType() == components.ColumnTypeEpisodes || top.ColumnType() == components.ColumnTypeSeasonEpisodes {
-		listHeight = (55 * contentHeight) / 100
-	}
-	if listHeight < 4 {
-		listHeight = 4
-	}
-
-	infoHeight := contentHeight - listHeight
-	if infoHeight < 6 {
-		infoHeight = 6
-	}
-
-	// Reserve space for the inspector title/blank, the non-poster header
-	// metadata, the technical footer (movies/episodes), the two scroll
-	// indicators and a safety margin. This guarantees the rendered poster
-	// never makes the inspector panel taller than its allocated height.
-	reserved := 8
-	if item := top.SelectedItem(); item != nil {
-		if mi, ok := item.(*domain.MediaItem); ok && mi.Type == domain.MediaTypeMovie {
-			reserved = 10
-		}
-	}
-
-	maxHeight := infoHeight - reserved
+	previewHeight := contentHeight - contentHeight/2
+	// Preview border, title, and the blank line below the title.
+	maxHeight := previewHeight - 4
 	if maxHeight < 1 {
 		maxHeight = 1
 	}

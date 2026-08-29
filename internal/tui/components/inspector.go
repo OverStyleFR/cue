@@ -48,7 +48,7 @@ func (i *Inspector) SetItem(item interface{}) {
 		return
 	}
 	i.item = item
-	i.offset = 0 // Reset scroll on item change
+	i.offset = 0  // Reset scroll on item change
 	i.poster = "" // Clear any previously rendered poster
 }
 
@@ -126,10 +126,27 @@ func (i Inspector) View() string {
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
-	content := i.renderInspector(contentWidth)
+
+	// Keep artwork beside the information whenever the pane is wide enough.
+	// A stacked poster consumes the vertical space needed for the title,
+	// metadata, and summary.
+	poster := ""
+	textWidth := contentWidth
+	if i.poster != "" {
+		const posterGap = 2
+		posterWidth := lipgloss.Width(i.poster)
+		if remaining := contentWidth - posterWidth - posterGap; remaining >= 16 {
+			poster = i.poster
+			textWidth = remaining
+		}
+	}
+	content := i.renderInspector(textWidth)
+	if poster == "" && i.poster != "" {
+		content = prependPoster(content, i.poster)
+	}
 
 	// Title line (styled, matching other columns)
-	titleLine := styles.AccentStyle.Render(styles.Truncate("Info", contentWidth))
+	titleLine := styles.AccentStyle.Render(styles.Truncate("Info", textWidth))
 
 	// Three-zone layout: header is fixed, body scrolls, footer is fixed
 	headerLines := splitLines(content.header)
@@ -216,6 +233,12 @@ func (i Inspector) View() string {
 	}
 
 	rendered := strings.Join(parts, "\n")
+	if poster != "" {
+		// Align the poster with the content below the title. The leading blank
+		// lines reserve the title and its spacer across the full inspector.
+		poster = "\n\n" + trimLines(poster, i.maxVisible)
+		rendered = lipgloss.JoinHorizontal(lipgloss.Top, poster, "  ", rendered)
+	}
 
 	// Subtract frame (border) size so total rendered size equals i.width x i.height
 	frameW, frameH := style.GetFrameSize()
@@ -224,6 +247,28 @@ func (i Inspector) View() string {
 		Width(i.width - frameW).
 		Height(i.height - frameH).
 		Render(rendered)
+}
+
+// prependPoster preserves the stacked layout for panes too narrow to keep a
+// readable metadata column beside the poster.
+func prependPoster(content inspectorContent, poster string) inspectorContent {
+	if content.header == "" {
+		content.header = poster
+	} else {
+		content.header = poster + "\n" + content.header
+	}
+	return content
+}
+
+func trimLines(content string, max int) string {
+	if max < 1 {
+		return ""
+	}
+	lines := splitLines(content)
+	if len(lines) > max {
+		lines = lines[:max]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderInspector renders the inspector panel content as three zones
@@ -248,14 +293,6 @@ func (i Inspector) renderInspector(width int) inspectorContent {
 		content = inspectorContent{body: styles.DimStyle.Render("No item selected")}
 	}
 
-	// Prepend the rendered poster (ASCII art or kitty image) above the metadata.
-	if i.poster != "" {
-		if content.header == "" {
-			content.header = i.poster
-		} else {
-			content.header = i.poster + "\n" + content.header
-		}
-	}
 	return content
 }
 

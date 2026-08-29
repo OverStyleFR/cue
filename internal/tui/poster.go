@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	_ "golang.org/x/image/webp"
 	"hash/fnv"
 	"image"
+	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
 	_ "image/png"
-	_ "golang.org/x/image/webp"
 	"io"
 	"log/slog"
 	"os"
@@ -26,9 +27,9 @@ import (
 )
 
 const (
-	// posterMaxWidth caps the rendered poster width in cells.
-	posterMaxWidth      = 44
+	// posterPreviewWidth is sized for the dedicated lower-left preview pane.
 	posterMinWidth      = 20
+	posterPreviewWidth  = 30
 	posterFetchAttempts = 3
 
 	// kitty cell pixel estimates used to size transmitted images.
@@ -142,6 +143,7 @@ func renderASCII(data []byte, widthCells, maxHeightCells int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	img = cropPoster(img)
 	// "halfcell" mode doubles vertical resolution using block characters.
 	content, err := gopixels.FromImageStream(img, widthCells, 0, "halfcell", true)
 	if err != nil || maxHeightCells <= 0 {
@@ -165,6 +167,8 @@ func renderKitty(data []byte, itemID string, requestID uint64, widthCells, maxHe
 	if b.Dx() <= 0 || b.Dy() <= 0 {
 		return nil, 0, 0, 0, fmt.Errorf("invalid image bounds")
 	}
+	img = cropPoster(img)
+	b = img.Bounds()
 	dispW := widthCells * kittyCellWpx
 	dispH := (dispW * b.Dy()) / b.Dx()
 	if maxHeightCells > 0 && dispH > maxHeightCells*kittyCellHpx {
@@ -194,6 +198,36 @@ func renderKitty(data []byte, itemID string, requestID uint64, widthCells, maxHe
 		heightCells = maxHeightCells
 	}
 	return buf.Bytes(), kittyImageID(itemID, requestID), widthCells, heightCells, nil
+}
+
+// cropPoster center-crops artwork to the portrait shape used by the inspector.
+// Some servers return a wide thumbnail as a primary image; showing it at its
+// natural aspect ratio would reduce the sidebar artwork to a single row.
+func cropPoster(img image.Image) image.Image {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return img
+	}
+
+	// Most posters use a 2:3 aspect ratio.
+	if w*3 == h*2 {
+		return img
+	}
+	crop := b
+	if w*3 > h*2 {
+		cropW := h * 2 / 3
+		crop.Min.X += (w - cropW) / 2
+		crop.Max.X = crop.Min.X + cropW
+	} else {
+		cropH := w * 3 / 2
+		crop.Min.Y += (h - cropH) / 2
+		crop.Max.Y = crop.Min.Y + cropH
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
+	draw.Draw(dst, dst.Bounds(), img, crop.Min, draw.Src)
+	return dst
 }
 
 // kittyImageID returns a request-specific ID for fetched posters. Using a new

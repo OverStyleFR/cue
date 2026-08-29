@@ -17,8 +17,8 @@ import (
 
 // Layout constants for list columns
 const (
-	// Border adds 1 char on each side (left+right for width, top+bottom for height)
-	BorderWidth  = 2
+	// Frame includes the two border cells plus one cell of left padding.
+	BorderWidth  = 3
 	BorderHeight = 2
 
 	// Scroll indicators ("↑ more" and "↓ more") each take 1 line
