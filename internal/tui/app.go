@@ -663,6 +663,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			deleteKittyImage(m.posterOutput, msg.ImageID)
 			return m, nil
 		}
+		if m.posterImageID != msg.ImageID {
+			deleteKittyImage(m.posterOutput, m.posterImageID)
+		}
 		m.posterContent = msg.Content
 		m.posterPlacement = msg.Placement
 		m.posterImageID = msg.ImageID
@@ -979,7 +982,6 @@ func (m *Model) updateInspector() tea.Cmd {
 		return nil
 	}
 
-	m.clearPosterState()
 	m.posterRequestID++
 	requestID := m.posterRequestID
 	m.posterRequestKey = requestKey

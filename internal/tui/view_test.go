@@ -8,6 +8,7 @@ import (
 	"github.com/SuperCoolPencil/cue/internal/domain"
 	"github.com/SuperCoolPencil/cue/internal/tui/components"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestShowPosterAppearsInView(t *testing.T) {
@@ -54,7 +55,20 @@ func TestShowPosterAppearsInView(t *testing.T) {
 	if !strings.Contains(view, "ASCII_POSTER_CONTENT") {
 		t.Fatalf("show poster not rendered in view; got:\n%s", view)
 	}
+	if strings.HasPrefix(view, m.posterPlacement) {
+		t.Fatal("kitty placement was emitted on the first UI line")
+	}
+	if !strings.Contains(view, m.posterPlacement) {
+		t.Fatal("kitty placement was not emitted beside the preview")
+	}
 	if got, want := strings.Count(view, "\n"), strings.Count(viewWithoutPoster, "\n"); got != want {
 		t.Fatalf("poster changed view height: got %d lines, want %d", got+1, want+1)
+	}
+	measured := strings.Replace(view, m.posterPlacement, "", 1)
+	if got := lipgloss.Height(measured); got != m.Height {
+		t.Fatalf("view height = %d, terminal height = %d", got, m.Height)
+	}
+	if got := lipgloss.Width(measured); got > m.Width {
+		t.Fatalf("view width = %d, terminal width = %d", got, m.Width)
 	}
 }

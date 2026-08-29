@@ -225,7 +225,7 @@ func (c *ListColumn) View() string {
 	return style.
 		Width(c.width - frameW).
 		Height(c.height - frameH).
-		Render(content)
+		Render(styles.InsetLeft(content))
 }
 
 func (c *ListColumn) SetSize(width, height int) {

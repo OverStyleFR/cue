@@ -1,6 +1,10 @@
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Color palette
 var (
@@ -19,13 +23,11 @@ var (
 var (
 	ActiveBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(PlexOrange).
-			PaddingLeft(1)
+			BorderForeground(PlexOrange)
 
 	InactiveBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(DimGray).
-			PaddingLeft(1)
+			BorderForeground(DimGray)
 
 	NoBorder = lipgloss.NewStyle().
 			Border(lipgloss.HiddenBorder())
@@ -208,6 +210,13 @@ func spaces(n int) string {
 		b[i] = ' '
 	}
 	return string(b)
+}
+
+// InsetLeft adds one printable cell inside a pane without changing the pane's
+// border frame. Keeping this separate from border-style padding avoids terminal
+// wrapping differences in incremental full-screen renders.
+func InsetLeft(content string) string {
+	return " " + strings.ReplaceAll(content, "\n", "\n ")
 }
 
 // RenderProgressBar renders a progress bar

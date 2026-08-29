@@ -366,10 +366,11 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 		return nil
 	}
 	return func() tea.Msg {
+		failed := PosterLoadedMsg{RequestID: requestID, ItemID: itemID}
 		data, err := fetchPosterData(client, itemID, url)
 		if err != nil {
 			slog.Debug("poster fetch failed", "itemID", itemID, "url", url, "error", err)
-			return nil
+			return failed
 		}
 
 		if SupportsKittyImage() {
@@ -384,7 +385,7 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 				slog.Debug("FetchPosterCmd: transmitting kitty image", "itemID", itemID, "imageID", imageID, "widthCells", w, "heightCells", h)
 				if _, err := io.WriteString(output, kittyTransmit(pngBytes, imageID)); err != nil {
 					slog.Debug("kitty transmit failed", "itemID", itemID, "error", err)
-					return nil
+					return failed
 				}
 				slog.Debug("FetchPosterCmd: returning kitty poster", "itemID", itemID, "imageID", imageID)
 				return PosterLoadedMsg{
@@ -403,7 +404,7 @@ func FetchPosterCmd(client mediaserver.MediaSource, output io.Writer, requestID 
 		content, err := renderASCII(data, widthCells, maxHeightCells)
 		if err != nil || content == "" {
 			slog.Debug("ASCII render failed", "itemID", itemID, "error", err, "empty", content == "")
-			return nil
+			return failed
 		}
 		return PosterLoadedMsg{RequestID: requestID, ItemID: itemID, Content: content}
 	}

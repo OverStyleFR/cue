@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const posterPlacementMarker = "\x00"
+
 // RenderSpinner renders a loading spinner
 func RenderSpinner(frame int) string {
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -171,9 +173,10 @@ func (m Model) View() string {
 			m.InputModal.View())
 	}
 
-	// Emit Kitty's non-printing placement only after every layout calculation.
-	// The matching Unicode placeholders are already inside the preview pane.
-	view = m.posterPlacement + view
+	// Insert Kitty's non-printing placement at the preview itself only after
+	// every layout calculation. Keeping it off the first screen line prevents
+	// image changes from disturbing Bubble Tea's top-of-screen cursor diff.
+	view = strings.Replace(view, posterPlacementMarker, m.posterPlacement, 1)
 	return view
 }
 
@@ -196,7 +199,7 @@ func (m Model) renderLibraryColumn(libCol *components.ListColumn, width, height 
 
 func (m Model) renderPosterPreview(width, height int) string {
 	frameW, frameH := styles.InactiveBorder.GetFrameSize()
-	contentWidth := max(1, width-frameW)
+	contentWidth := max(1, width-frameW-1)
 	contentHeight := max(1, height-frameH)
 
 	poster := ""
@@ -204,7 +207,7 @@ func (m Model) renderPosterPreview(width, height int) string {
 		// Keep the Kitty placement command out of Lip Gloss measurement. APC
 		// escape sequences are not printable cells, but treating one as content
 		// can widen/tall the entire application when the image arrives.
-		poster = m.posterContent
+		poster = posterPlacementMarker + m.posterContent
 	}
 	if poster == "" {
 		poster = styles.DimStyle.Render("No preview available")
@@ -214,9 +217,9 @@ func (m Model) renderPosterPreview(width, height int) string {
 	bodyHeight := max(1, contentHeight-2)
 	body := lipgloss.Place(contentWidth, bodyHeight, lipgloss.Center, lipgloss.Center, poster)
 	rendered := styles.InactiveBorder.
-		Width(contentWidth).
+		Width(width - frameW).
 		Height(contentHeight).
-		Render(title + "\n\n" + body)
+		Render(styles.InsetLeft(title + "\n\n" + body))
 	return rendered
 }
 

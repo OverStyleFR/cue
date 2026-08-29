@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
@@ -79,8 +80,8 @@ func TestUpdateInspectorReloadsPosterWhenRequestKeyChanges(t *testing.T) {
 	if m.posterRequestID == firstRequestID {
 		t.Fatal("poster request generation did not advance")
 	}
-	if m.posterContent != "" {
-		t.Fatal("old poster remained visible while the replacement was loading")
+	if m.posterContent != "old poster" {
+		t.Fatal("existing poster was cleared while its replacement was loading")
 	}
 }
 
@@ -173,6 +174,28 @@ func TestPosterLoadedIgnoresStaleRequest(t *testing.T) {
 	updated := model.(Model)
 	if updated.posterContent != "current poster" {
 		t.Fatal("stale poster request replaced the current poster")
+	}
+}
+
+func TestPosterFailureClearsRetainedPreviewAfterRequestCompletes(t *testing.T) {
+	var output bytes.Buffer
+	m := Model{
+		posterRequestID:  3,
+		posterItemID:     "movie-2",
+		posterContent:    "previous poster",
+		posterPlacement:  "previous placement",
+		posterImageID:    42,
+		posterOutput:     &output,
+		posterRequestKey: "movie-2\x00url\x0030\x0020",
+	}
+
+	model, _ := m.Update(PosterLoadedMsg{RequestID: 3, ItemID: "movie-2"})
+	updated := model.(Model)
+	if updated.posterContent != "" || updated.posterPlacement != "" || updated.posterImageID != 0 {
+		t.Fatal("failed replacement left the previous preview visible")
+	}
+	if output.Len() == 0 {
+		t.Fatal("failed replacement did not delete the previous kitty image")
 	}
 }
 

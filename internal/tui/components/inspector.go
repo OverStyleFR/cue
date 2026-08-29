@@ -246,7 +246,7 @@ func (i Inspector) View() string {
 	return style.
 		Width(i.width - frameW).
 		Height(i.height - frameH).
-		Render(rendered)
+		Render(styles.InsetLeft(rendered))
 }
 
 // prependPoster preserves the stacked layout for panes too narrow to keep a
