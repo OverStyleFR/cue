@@ -13,6 +13,7 @@
 -  **Smart Filtering**: Hide watched movies, shows, and seasons with a single setting for a cleaner library view.
 -  **Smart Scrobbling**: Real-time playback progress and watch status sync with Plex & Jellyfin via mpv IPC.
 -  **Deep Metadata**: View rich details, media info, and progress bars in a dedicated inspector.
+-  **Artwork Preview**: See the selected movie or show's poster in a dedicated preview pane, with native Kitty graphics and an ASCII fallback.
 -  **Global Fuzzy Search**: Instantly find any movie or show with just a few keystrokes.
 -  **Vim-Style Navigation**: Efficient, keyboard-first interface using familiar `h/j/k/l` bindings.
 -  **Live Status Display**: Persistent 'Now Playing' and scrobble status in the footer.
@@ -40,6 +41,10 @@ cue
 You'll be prompted to enter your server URL. Cue automatically detects whether it's a Plex or Jellyfin server and guides you through the appropriate authentication.
 
 ## Usage
+
+### Artwork Preview
+
+Cue displays artwork with the Kitty graphics protocol when running directly in Kitty. Other terminals—and Kitty sessions inside tmux, Zellij, or GNU screen—automatically use the ASCII fallback.
 
 ### Keyboard Shortcuts
 
