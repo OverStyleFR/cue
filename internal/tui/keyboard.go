@@ -172,7 +172,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if oldCursor != top.SelectedIndex() {
-			m.updateInspector()
+			pc := m.updateInspector()
+			if pc != nil {
+				cmds = append(cmds, pc)
+			}
 		}
 	}
 
@@ -281,8 +284,8 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				m.Loading = true
 				return m, LoadEpisodesCmd(m.LibraryService, m.currentLibID, m.currentShowID, seasonID)
 			}
-			m.updateInspector()
-			return m, nil
+			pc := m.updateInspector()
+			return m, pc
 		}
 		// Cursor is on an episode — play it
 		if item := top.SelectedMediaItem(); item != nil {
@@ -341,6 +344,7 @@ func (m Model) handleRefresh() (tea.Model, tea.Cmd) {
 	if top == nil {
 		return m, nil
 	}
+	m.invalidatePoster()
 
 	switch top.ColumnType() {
 	case components.ColumnTypeLibraries:
@@ -436,6 +440,7 @@ func (m Model) refreshLibraryContent(top *components.ListColumn) (Model, tea.Cmd
 // user is inside no longer exists.
 func (m Model) handleRefreshAll() (tea.Model, tea.Cmd) {
 	m.Loading = true
+	m.invalidatePoster()
 
 	m.LibraryService.InvalidateAll()
 	m.PlaylistService.InvalidatePlaylists()
@@ -715,14 +720,15 @@ func (m Model) handleGlobalSearchInput(msg tea.KeyMsg) (Model, tea.Cmd) {
 // handleSortModalInput handles input when sort modal is visible
 func (m Model) handleSortModalInput(msg tea.KeyMsg) (bool, Model, tea.Cmd) {
 	handled, selection := m.SortModal.HandleKeyMsg(msg)
+	var pc tea.Cmd
 	if handled {
 		if selection != nil {
 			if top := m.ColumnStack.Top(); top != nil {
 				top.ApplySort(selection.Field, selection.Direction)
-				m.updateInspector()
+				pc = m.updateInspector()
 			}
 		}
-		return true, m, nil
+		return true, m, pc
 	}
 	return false, m, nil
 }
@@ -818,7 +824,8 @@ func (m Model) handleFilterTypingInput(msg tea.KeyMsg) (bool, Model, tea.Cmd) {
 	newCol, _ := top.Update(msg)
 	m.ColumnStack.UpdateTop(newCol)
 	if oldCursor != top.SelectedIndex() {
-		m.updateInspector()
+		pc := m.updateInspector()
+		return true, m, pc
 	}
 	return true, m, nil
 }

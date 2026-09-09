@@ -1,6 +1,10 @@
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Color palette
 var (
@@ -208,6 +212,13 @@ func spaces(n int) string {
 	return string(b)
 }
 
+// InsetLeft adds one printable cell inside a pane without changing the pane's
+// border frame. Keeping this separate from border-style padding avoids terminal
+// wrapping differences in incremental full-screen renders.
+func InsetLeft(content string) string {
+	return " " + strings.ReplaceAll(content, "\n", "\n ")
+}
+
 // RenderProgressBar renders a progress bar
 func RenderProgressBar(percent float64, width int) string {
 	if width < 3 {
@@ -253,6 +264,9 @@ func RenderListRow(parts []RowPart, selected bool, width int) string {
 		if selected {
 			style = style.Background(bg)
 		}
+		if part.Bold {
+			style = style.Bold(true)
+		}
 		result += style.Render(part.Text)
 		visibleLen += lipgloss.Width(part.Text)
 	}
@@ -281,4 +295,5 @@ func RenderListRow(parts []RowPart, selected bool, width int) string {
 type RowPart struct {
 	Text       string
 	Foreground *lipgloss.Color
+	Bold       bool
 }

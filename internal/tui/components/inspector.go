@@ -32,6 +32,7 @@ type Inspector struct {
 	maxVisible    int // max visible lines
 	libraryStates map[string]LibrarySyncState
 	Focused       bool
+	poster        string // rendered poster (ASCII art or kitty image escape sequence)
 }
 
 // NewInspector creates a new inspector component
@@ -47,7 +48,14 @@ func (i *Inspector) SetItem(item interface{}) {
 		return
 	}
 	i.item = item
-	i.offset = 0 // Reset scroll on item change
+	i.offset = 0  // Reset scroll on item change
+	i.poster = "" // Clear any previously rendered poster
+}
+
+// SetPoster stores a rendered poster (ASCII art or kitty image escape sequence)
+// for the currently selected item.
+func (i *Inspector) SetPoster(content string) {
+	i.poster = content
 }
 
 // SetLibraryStates sets the library sync states for displaying item counts
@@ -64,6 +72,11 @@ func (i *Inspector) SetSize(width, height int) {
 	if i.maxVisible < 1 {
 		i.maxVisible = 1
 	}
+}
+
+// Width returns the configured width of the inspector panel.
+func (i Inspector) Width() int {
+	return i.width
 }
 
 // HasItem returns true if there is an item to display
@@ -113,15 +126,42 @@ func (i Inspector) View() string {
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
-	content := i.renderInspector(contentWidth)
+
+	// Keep artwork beside the information whenever the pane is wide enough.
+	// A stacked poster consumes the vertical space needed for the title,
+	// metadata, and summary.
+	poster := ""
+	textWidth := contentWidth
+	if i.poster != "" {
+		const posterGap = 2
+		posterWidth := lipgloss.Width(i.poster)
+		if remaining := contentWidth - posterWidth - posterGap; remaining >= 16 {
+			poster = i.poster
+			textWidth = remaining
+		}
+	}
+	content := i.renderInspector(textWidth)
+	if poster == "" && i.poster != "" {
+		content = prependPoster(content, i.poster)
+	}
 
 	// Title line (styled, matching other columns)
-	titleLine := styles.AccentStyle.Render(styles.Truncate("Info", contentWidth))
+	titleLine := styles.AccentStyle.Render(styles.Truncate("Info", textWidth))
 
 	// Three-zone layout: header is fixed, body scrolls, footer is fixed
 	headerLines := splitLines(content.header)
 	footerLines := splitLines(content.footer)
 	bodyLines := splitLines(content.body)
+
+	// Guard against the header (poster + metadata) growing taller than the
+	// panel. We always keep at least one body line plus the scroll indicators.
+	maxHeaderLines := i.maxVisible - len(footerLines) - 1
+	if maxHeaderLines < 0 {
+		maxHeaderLines = 0
+	}
+	if len(headerLines) > maxHeaderLines {
+		headerLines = headerLines[:maxHeaderLines]
+	}
 
 	// Calculate available space for body
 	availableForBody := i.maxVisible - len(headerLines) - len(footerLines)
@@ -193,6 +233,12 @@ func (i Inspector) View() string {
 	}
 
 	rendered := strings.Join(parts, "\n")
+	if poster != "" {
+		// Align the poster with the content below the title. The leading blank
+		// lines reserve the title and its spacer across the full inspector.
+		poster = "\n\n" + trimLines(poster, i.maxVisible)
+		rendered = lipgloss.JoinHorizontal(lipgloss.Top, poster, "  ", rendered)
+	}
 
 	// Subtract frame (border) size so total rendered size equals i.width x i.height
 	frameW, frameH := style.GetFrameSize()
@@ -200,29 +246,54 @@ func (i Inspector) View() string {
 	return style.
 		Width(i.width - frameW).
 		Height(i.height - frameH).
-		Render(rendered)
+		Render(styles.InsetLeft(rendered))
+}
+
+// prependPoster preserves the stacked layout for panes too narrow to keep a
+// readable metadata column beside the poster.
+func prependPoster(content inspectorContent, poster string) inspectorContent {
+	if content.header == "" {
+		content.header = poster
+	} else {
+		content.header = poster + "\n" + content.header
+	}
+	return content
+}
+
+func trimLines(content string, max int) string {
+	if max < 1 {
+		return ""
+	}
+	lines := splitLines(content)
+	if len(lines) > max {
+		lines = lines[:max]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderInspector renders the inspector panel content as three zones
 func (i Inspector) renderInspector(width int) inspectorContent {
+	var content inspectorContent
 	switch v := i.item.(type) {
 	case *domain.MediaItem:
-		return i.renderMediaItemInspector(*v, width)
+		content = i.renderMediaItemInspector(*v, width)
 	case *domain.Show:
-		return i.renderShowInspector(*v, width)
+		content = i.renderShowInspector(*v, width)
 	case *domain.Season:
-		return inspectorContent{header: i.renderSeasonInspector(*v, width)}
+		content = inspectorContent{header: i.renderSeasonInspector(*v, width)}
 	case *SeasonHeader:
-		return inspectorContent{header: i.renderSeasonInspector(*v.Season, width)}
+		content = inspectorContent{header: i.renderSeasonInspector(*v.Season, width)}
 	case *domain.Library:
-		return inspectorContent{body: i.renderLibraryInspector(v, width)}
+		content = inspectorContent{body: i.renderLibraryInspector(v, width)}
 	case domain.Library:
-		return inspectorContent{body: i.renderLibraryInspector(&v, width)}
+		content = inspectorContent{body: i.renderLibraryInspector(&v, width)}
 	case *domain.Playlist:
-		return inspectorContent{body: i.renderPlaylistInspector(*v, width)}
+		content = inspectorContent{body: i.renderPlaylistInspector(*v, width)}
 	default:
-		return inspectorContent{body: styles.DimStyle.Render("No item selected")}
+		content = inspectorContent{body: styles.DimStyle.Render("No item selected")}
 	}
+
+	return content
 }
 
 func (i Inspector) renderMediaItemInspector(item domain.MediaItem, width int) inspectorContent {

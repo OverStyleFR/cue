@@ -3,7 +3,10 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/SuperCoolPencil/cue/internal/config"
@@ -20,6 +23,18 @@ import (
 // authFailedStatusMsg tells the user how to recover from a revoked/expired
 // token. Shown persistently (not auto-cleared) since action is required.
 const authFailedStatusMsg = "Session expired or revoked — press L to log out, then run cue to sign in again"
+
+func playbackStatusText(item domain.MediaItem, position time.Duration) string {
+	if position < 0 {
+		position = 0
+	}
+	title := item.Title
+	if item.ShowTitle != "" {
+		title += " - " + item.ShowTitle
+	}
+	totalMinutes := int64(position / time.Minute)
+	return fmt.Sprintf("%s (%02d:%02d)", title, totalMinutes/60, totalMinutes%60)
+}
 
 // ApplicationState represents the current state of the application
 type ApplicationState int
@@ -160,6 +175,23 @@ type Model struct {
 	pendingPlaylist    []domain.MediaItem
 	PendingSelectionID string // ID of item to select after load completes
 	pendingDelete      domain.ListItem
+
+	// posterItemID tracks the item a poster fetch was last requested for,
+	// so stale PosterLoadedMsg results are ignored.
+	posterItemID string
+	// posterRequestKey identifies the item, URL, and rendered dimensions
+	// currently being requested.
+	posterRequestKey string
+	posterRequestID  uint64
+	// posterContent holds the last rendered poster (ASCII art or kitty escape)
+	// for posterItemID. It is re-applied to the active column's inspector on
+	// every render, since the inspector clears its poster when SetItem is called.
+	posterContent string
+	// posterPlacement is the virtual kitty placement prepended to the
+	// placeholder cells whenever the poster is rendered.
+	posterPlacement string
+	posterImageID   uint32
+	posterOutput    io.Writer
 }
 
 // NewModel creates a new application model
@@ -195,6 +227,12 @@ func NewModel(
 	}
 }
 
+// SetOutput configures the synchronized terminal writer used for Kitty image
+// uploads. Bubble Tea should be configured with the same writer.
+func (m *Model) SetOutput(w io.Writer) {
+	m.posterOutput = w
+}
+
 // Init initializes the application
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
@@ -213,7 +251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 		m.Ready = true
 		m.updateLayout()
-		return m, nil
+		return m, m.updateInspector()
 
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
@@ -226,9 +264,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LibrariesLoadedMsg:
 		m.Libraries = msg.Libraries
-
-		// New sync generation: any still-running chains from before this
-		// reload are stale and their messages will be dropped
 		m.SyncGen++
 
 		// Initialize all states to Syncing (including playlists)
@@ -239,51 +274,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.LibraryStates[playlistsLibraryID] = components.LibrarySyncState{Status: components.StatusSyncing}
 		m.SyncingCount = len(msg.Libraries) + 1 // +1 for playlists
 		m.MultiLibSync = true
-		m.Inspector.SetLibraryStates(m.LibraryStates)
-		m.Loading = true
 
-		syncCmds := []tea.Cmd{
-			SyncAllLibrariesCmd(m.LibraryService, msg.Libraries, m.SyncGen),
-			SyncPlaylistsCmd(m.PlaylistService, playlistsLibraryID, m.SyncGen),
+		libraries := m.allLibraryEntries()
+		resetStack := !msg.Refresh || m.ColumnStack == nil || m.ColumnStack.Len() == 0 ||
+			(m.currentLibID != "" && !slices.ContainsFunc(msg.Libraries, func(lib domain.Library) bool {
+				return lib.ID == m.currentLibID
+			}))
+
+		var libCol *components.ListColumn
+		if resetStack {
+			libCol = components.NewLibraryColumn(libraries)
+			if m.ColumnStack == nil {
+				m.ColumnStack = NewColumnStack()
+			}
+			m.ColumnStack.Reset(libCol)
+			if msg.Refresh {
+				m.currentLibID = ""
+				m.currentShowID = ""
+			}
+		} else {
+			libCol = m.ColumnStack.Get(0)
+			libCol.SetItems(libraries)
 		}
 
-		// Refresh-all with the user somewhere deeper: keep their position.
-		// Update the root column in place and reload the top column's
-		// content in the background instead of resetting to the root.
-		if msg.Refresh && m.ColumnStack.Len() > 1 {
-			libCol := m.libraryColumn()
-			var drilledID string
-			if libCol != nil {
-				if sel := libCol.SelectedLibrary(); sel != nil {
-					drilledID = sel.ID
-				}
-				libCol.ReplaceItems(m.allLibraryEntries())
-				libCol.SetLibraryStates(m.LibraryStates)
-			}
-
-			// The library the user is inside may have been removed
-			// server-side — that's the one case where resetting is the
-			// only sane answer
-			if drilledID != "" && !isVirtualLibraryID(drilledID) && m.findLibrary(drilledID) == nil {
-				m.StatusMsg = "Library no longer exists on server"
-				m.StatusIsErr = true
-				syncCmds = append(syncCmds, ClearStatusCmd(5*time.Second))
-			} else {
-				if reload := m.reloadTopColumnCmd(); reload != nil {
-					syncCmds = append(syncCmds, reload)
-				}
-				return m, tea.Batch(syncCmds...)
-			}
-		}
-
-		// Initial load (or unrecoverable refresh): build the root column
-		libCol := components.NewLibraryColumn(m.allLibraryEntries())
 		libCol.SetLibraryStates(m.LibraryStates)
 		libCol.SetShowWatchStatus(m.UIConfig.ShowWatchStatus)
 		libCol.SetShowLibraryCounts(m.UIConfig.ShowLibraryCounts)
-		m.ColumnStack.Reset(libCol)
+		m.Inspector.SetLibraryStates(m.LibraryStates)
+		pc := m.updateInspector()
 
-		return m, tea.Batch(syncCmds...)
+		// Start parallel sync of ALL libraries + playlists
+		m.Loading = true
+		return m, tea.Batch(
+			pc,
+			SyncAllLibrariesCmd(m.LibraryService, msg.Libraries, m.SyncGen),
+			SyncPlaylistsCmd(m.PlaylistService, playlistsLibraryID, m.SyncGen),
+		)
 
 	case MoviesLoadedMsg:
 		m.Loading = false
@@ -303,16 +329,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update matching column with movies
 		if col := m.ColumnStack.FindColumn(msg.LibraryID); col != nil {
-			col.ReplaceItems(msg.Movies)
+			selectedID := m.getSelectedItemID(col)
+			col.SetItems(msg.Movies)
+			if selectedID != "" {
+				col.SetSelectedByID(selectedID)
+			}
 		}
 
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitMovies, msg.LibraryID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case ShowsLoadedMsg:
 		m.Loading = false
@@ -332,16 +362,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update matching column with shows
 		if col := m.ColumnStack.FindColumn(msg.LibraryID); col != nil {
-			col.ReplaceItems(msg.Shows)
+			selectedID := m.getSelectedItemID(col)
+			col.SetItems(msg.Shows)
+			if selectedID != "" {
+				col.SetSelectedByID(selectedID)
+			}
 		}
 
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitShows, msg.LibraryID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case MixedLibraryLoadedMsg:
 		m.Loading = false
@@ -361,16 +395,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update matching column with mixed content
 		if col := m.ColumnStack.FindColumn(msg.LibraryID); col != nil {
-			col.ReplaceItems(msg.Items)
+			selectedID := m.getSelectedItemID(col)
+			col.SetItems(msg.Items)
+			if selectedID != "" {
+				col.SetSelectedByID(selectedID)
+			}
 		}
 
-		m.updateInspector()
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitMixed, msg.LibraryID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case SeasonsLoadedMsg:
 		m.Loading = false
@@ -394,25 +432,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			top.SetSeasonGroups(groups)
-			m.updateInspector()
+			pc := m.updateInspector()
 
 			// Auto-expand first season and kick off its episode load
 			if needsLoad, seasonID := top.ExpandFirstSeason(); needsLoad {
 				m.Loading = true
-				return m, LoadEpisodesCmd(m.LibraryService, m.currentLibID, m.currentShowID, seasonID)
+				return m, tea.Batch(pc, LoadEpisodesCmd(m.LibraryService, m.currentLibID, m.currentShowID, seasonID))
 			}
-			return m, nil
+			return m, pc
 		}
 
 		// Classic path: populate seasons column
-		top.ReplaceItems(msg.Seasons)
-		m.updateInspector()
+		selectedID := m.getSelectedItemID(top)
+		top.SetItems(msg.Seasons)
+		if selectedID != "" {
+			top.SetSelectedByID(selectedID)
+		}
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitSeasons, msg.ShowID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case EpisodesLoadedMsg:
 		m.Loading = false
@@ -425,25 +467,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if top.ColumnType() == components.ColumnTypeSeasonEpisodes {
 			// New path: insert episodes into the matching season group
 			top.AddSeasonEpisodes(msg.SeasonID, msg.Episodes)
-			m.updateInspector()
-			return m, nil
+			pc := m.updateInspector()
+			return m, pc
 		}
 
 		// Classic path: validate and populate a standalone episodes column
 		if !m.validateContentID(msg.SeasonID) {
 			return m, nil
 		}
-		top.ReplaceItems(msg.Episodes)
-		m.updateInspector()
+		selectedID := m.getSelectedItemID(top)
+		top.SetItems(msg.Episodes)
+		if selectedID != "" {
+			top.SetSelectedByID(selectedID)
+		}
+		pc := m.updateInspector()
 
 		// Advance nav plan if waiting for this load
 		if cmd := m.advanceNavPlanAfterLoad(AwaitEpisodes, msg.SeasonID); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(pc, cmd)
 		}
-		return m, nil
+		return m, pc
 
 	case PlaybackStartedMsg:
-		m.isPlayingTitle = msg.Item.Title
+		m.isPlayingTitle = playbackStatusText(msg.Item, msg.Item.ViewOffset)
 		m.StatusMsg = ""
 		return m, tea.Batch(
 			WaitForPlaybackCmd(msg.Handle.ResultCh),
@@ -451,7 +497,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PlaybackStatusMsg:
-		// Keep listening for more status updates — status displayed via isPlayingTitle
+		m.isPlayingTitle = playbackStatusText(msg.Status.Item, time.Duration(msg.Status.PositionMs)*time.Millisecond)
 		return m, ListenForPlaybackStatusCmd(msg.StatusCh)
 
 	case PlaybackFinishedMsg:
@@ -490,10 +536,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearNavPlan()
 		m.StatusIsErr = true
 		m.Loading = false
-		// A failed refresh must not leave the column spinner running
-		if top := m.ColumnStack.Top(); top != nil {
-			top.SetRefreshing(false)
-		}
 		if errors.Is(msg.Err, domain.ErrAuthFailed) {
 			// Actionable, persistent message: the token was revoked/expired
 			// and the user must re-authenticate
@@ -516,13 +558,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case LibrarySyncProgressMsg:
-		// Drop messages from sync chains superseded by a newer library
-		// reload; without this, stale chains corrupt SyncingCount and can
-		// wedge the loading state permanently
 		if msg.Generation != m.SyncGen {
 			return m, nil
 		}
-
 		state := m.LibraryStates[msg.LibraryID]
 
 		if msg.Error != nil {
@@ -586,18 +624,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PlaylistsLoadedMsg:
 		m.Loading = false
-
-		// Validate content ID like every other load handler: a slow playlist
-		// fetch must not clobber whatever column the user navigated to since
-		if !m.validateContentID(playlistsLibraryID) {
-			return m, nil
-		}
-
 		if top := m.ColumnStack.Top(); top != nil {
-			top.ReplaceItems(msg.Playlists)
+			top.SetItems(msg.Playlists)
 		}
-		m.updateInspector()
-		return m, nil
+		pc := m.updateInspector()
+		return m, pc
 
 	case PlaylistItemsLoadedMsg:
 		m.Loading = false
@@ -609,17 +640,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.currentPlaylistID = msg.PlaylistID
 		if top := m.ColumnStack.Top(); top != nil {
-			top.ReplaceItems(msg.Items)
+			top.SetItems(msg.Items)
 		}
-		m.updateInspector()
-		return m, nil
+		pc := m.updateInspector()
+		return m, pc
 
 	case ContinueWatchingLoadedMsg:
 		m.Loading = false
 		if top := m.ColumnStack.Top(); top != nil && top.ContentID() == continueLibraryID {
-			top.ReplaceItems(msg.Items)
+			top.SetItems(msg.Items)
 		}
-		m.updateInspector()
+		pc := m.updateInspector()
+		return m, pc
+
+	case PosterLoadedMsg:
+		if msg.RequestID != m.posterRequestID || msg.ItemID != m.posterItemID {
+			deleteKittyImage(m.posterOutput, msg.ImageID)
+			return m, nil
+		}
+		if m.posterImageID != msg.ImageID {
+			deleteKittyImage(m.posterOutput, m.posterImageID)
+		}
+		m.posterContent = msg.Content
+		m.posterPlacement = msg.Placement
+		m.posterImageID = msg.ImageID
 		return m, nil
 
 	case SeasonForPlaybackLoadedMsg:
@@ -724,7 +768,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if oldCursor != top.SelectedIndex() {
-			m.updateInspector()
+			if pc := m.updateInspector(); pc != nil {
+				cmds = append(cmds, pc)
+			}
 		}
 	}
 
@@ -751,8 +797,41 @@ func (m *Model) updateLibraryStates() {
 	m.Inspector.SetLibraryStates(m.LibraryStates)
 }
 
+// applyWatchState updates every cached and currently rendered copy of an item.
+// Keeping the cache in sync is important: otherwise a subsequent cached load
+// can immediately restore the item's old watch status after the server update.
+func (m *Model) applyWatchState(itemID string, played bool) {
+	m.LibraryService.SetWatchState(itemID, played)
+
+	var patched *domain.MediaItem
+	flipped := false
+	for i := 0; i < m.ColumnStack.Len(); i++ {
+		if col := m.ColumnStack.Get(i); col != nil {
+			if item, changed := col.ApplyWatchState(itemID, played); item != nil {
+				patched = item
+				flipped = flipped || changed
+			}
+		}
+	}
+
+	if flipped && patched != nil && patched.ShowID != "" {
+		delta := 1
+		if played {
+			delta = -1
+		}
+		for i := 0; i < m.ColumnStack.Len(); i++ {
+			if col := m.ColumnStack.Get(i); col != nil {
+				col.AdjustUnwatchedCounts(patched.ShowID, patched.ParentID, delta)
+			}
+		}
+	}
+
+	m.updateInspector()
+}
+
 // refreshCurrentView refreshes the current view
 func (m *Model) refreshCurrentView() tea.Cmd {
+	m.invalidatePoster()
 	if m.currentLibID != "" {
 		m.LibraryService.InvalidateLibrary(m.currentLibID)
 	} else {
@@ -825,113 +904,6 @@ func (m *Model) refreshCurrentView() tea.Cmd {
 	return LoadLibrariesCmd(m.LibraryService)
 }
 
-// reloadTopColumnCmd returns a command reloading the top column's content
-// from the server, landing via ReplaceItems so the cursor and view state
-// survive. Used by refresh-all to freshen the visible view without
-// resetting navigation. Returns nil at the root (updated in place).
-func (m *Model) reloadTopColumnCmd() tea.Cmd {
-	top := m.ColumnStack.Top()
-	if top == nil {
-		return nil
-	}
-
-	lib := m.findLibrary(m.currentLibID)
-	if m.currentLibID == continueLibraryID {
-		top.SetRefreshing(true)
-		return LoadContinueWatchingCmd(m.LibraryService)
-	}
-
-	switch top.ColumnType() {
-	case components.ColumnTypeMovies:
-		if lib != nil {
-			top.SetRefreshing(true)
-			return LoadMoviesCmd(m.LibraryService, *lib)
-		}
-	case components.ColumnTypeShows:
-		if lib != nil {
-			top.SetRefreshing(true)
-			return LoadShowsCmd(m.LibraryService, *lib)
-		}
-	case components.ColumnTypeMixed:
-		if lib != nil {
-			top.SetRefreshing(true)
-			return LoadMixedLibraryCmd(m.LibraryService, *lib)
-		}
-	case components.ColumnTypeSeasons:
-		if m.currentShowID != "" {
-			top.SetRefreshing(true)
-			return LoadSeasonsCmd(m.LibraryService, m.currentLibID, m.currentShowID)
-		}
-	case components.ColumnTypeSeasonEpisodes:
-		if m.currentShowID != "" {
-			top.SetRefreshing(true)
-			return LoadSeasonsCmd(m.LibraryService, m.currentLibID, m.currentShowID)
-		}
-	case components.ColumnTypeEpisodes:
-		if seasonCol := m.ColumnStack.Get(m.ColumnStack.Len() - 2); seasonCol != nil {
-			if season := seasonCol.SelectedSeason(); season != nil {
-				top.SetRefreshing(true)
-				return LoadEpisodesCmd(m.LibraryService, m.currentLibID, m.currentShowID, season.ID)
-			}
-		}
-	case components.ColumnTypePlaylists:
-		top.SetRefreshing(true)
-		return LoadPlaylistsCmd(m.PlaylistService)
-	case components.ColumnTypePlaylistItems:
-		if m.currentPlaylistID != "" {
-			top.SetRefreshing(true)
-			return LoadPlaylistItemsCmd(m.PlaylistService, m.currentPlaylistID)
-		}
-	}
-	return nil
-}
-
-func isVirtualLibraryID(id string) bool {
-	if id == playlistsLibraryID {
-		return true
-	}
-	for _, lib := range virtualLibraryEntries() {
-		if lib.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// applyWatchState patches an item's watch state in the cache and in every
-// visible column. This replaces the old invalidate-everything-and-refetch
-// approach: the UI updates instantly and no network requests are issued.
-func (m *Model) applyWatchState(itemID string, played bool) {
-	m.LibraryService.SetWatchState(itemID, played)
-
-	// Patch the item wherever a column renders it, and adjust unwatched
-	// counters on visible show/season rows if an episode flipped state.
-	var patched *domain.MediaItem
-	flipped := false
-	for i := 0; i < m.ColumnStack.Len(); i++ {
-		if col := m.ColumnStack.Get(i); col != nil {
-			if item, f := col.ApplyWatchState(itemID, played); item != nil {
-				patched = item
-				flipped = flipped || f
-			}
-		}
-	}
-
-	if flipped && patched != nil && patched.ShowID != "" {
-		delta := 1
-		if played {
-			delta = -1
-		}
-		for i := 0; i < m.ColumnStack.Len(); i++ {
-			if col := m.ColumnStack.Get(i); col != nil {
-				col.AdjustUnwatchedCounts(patched.ShowID, patched.ParentID, delta)
-			}
-		}
-	}
-
-	m.updateInspector()
-}
-
 // refreshAfterStatusChange handles refreshing the UI after a watch status change.
 // It invalidates the appropriate caches and triggers a reload of the current view.
 func (m *Model) refreshAfterStatusChange(libID string) tea.Cmd {
@@ -994,10 +966,147 @@ func (m Model) findLibrary(id string) *domain.Library {
 }
 
 // updateInspector updates the inspector with the selected item from middle column
-func (m *Model) updateInspector() {
-	if top := m.ColumnStack.Top(); top != nil {
-		m.Inspector.SetItem(top.SelectedItem())
-	} else {
-		m.Inspector.SetItem(nil)
+func (m *Model) updateInspector() tea.Cmd {
+	var top *components.ListColumn
+	if m.ColumnStack != nil {
+		top = m.ColumnStack.Top()
 	}
+	if top == nil {
+		m.Inspector.SetItem(nil)
+		if m.hasPosterState() {
+			m.invalidatePoster()
+		}
+		return nil
+	}
+
+	item := top.SelectedItem()
+	m.Inspector.SetItem(item)
+
+	// The inspector follows the active column, while the preview follows the
+	// nearest movie/show browsing column. Opening seasons or episodes must not
+	// discard the artwork for the selected parent show.
+	posterCol := m.posterSourceColumn()
+	if posterCol == nil {
+		if m.hasPosterState() {
+			m.invalidatePoster()
+		}
+		return nil
+	}
+	posterItem := posterCol.SelectedItem()
+	id := m.getSelectedItemID(posterCol)
+	url := PosterURL(posterItem)
+	if id == "" || (url == "" && !posterMetadataFallback(posterItem)) {
+		if m.hasPosterState() {
+			m.invalidatePoster()
+		}
+		return nil
+	}
+
+	width := m.posterPreviewWidth()
+	maxHeight := m.posterMaxHeight()
+	requestKey := strings.Join([]string{id, url, fmt.Sprint(width), fmt.Sprint(maxHeight)}, "\x00")
+	if requestKey == m.posterRequestKey {
+		return nil
+	}
+
+	m.posterRequestID++
+	requestID := m.posterRequestID
+	m.posterRequestKey = requestKey
+	m.posterItemID = id
+	return FetchPosterCmd(m.MediaClient, m.posterOutput, requestID, id, url, width, maxHeight)
+}
+
+func (m Model) posterSourceColumn() *components.ListColumn {
+	if m.ColumnStack == nil {
+		return nil
+	}
+	for idx := m.ColumnStack.Len() - 1; idx >= 0; idx-- {
+		col := m.ColumnStack.Get(idx)
+		if col != nil && showsPosterForColumn(col.ColumnType()) {
+			return col
+		}
+	}
+	return nil
+}
+
+func showsPosterForColumn(columnType components.ColumnType) bool {
+	switch columnType {
+	case components.ColumnTypeMovies, components.ColumnTypeShows, components.ColumnTypeMixed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) posterPreviewWidth() int {
+	if m.Width <= 0 {
+		return posterMinWidth
+	}
+	layout := m.calculateColumnLayout(m.Width)
+	width := layout.parentWidth
+	if m.ColumnStack != nil && m.ColumnStack.Len() >= 3 && layout.grandparentWidth > 0 {
+		width = layout.grandparentWidth
+	}
+	width -= 4 // preview border and a small horizontal margin
+	if width > posterPreviewWidth {
+		width = posterPreviewWidth
+	}
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+func posterMetadataFallback(item interface{}) bool {
+	_, ok := item.(*domain.MediaItem)
+	return ok
+}
+
+func (m Model) posterMaxHeight() int {
+	if m.Height <= ChromeHeight {
+		return 0
+	}
+
+	contentHeight := m.Height - ChromeHeight
+	previewHeight := contentHeight - contentHeight/2
+	// Preview border, title, and the blank line below the title.
+	maxHeight := previewHeight - 4
+	if maxHeight < 1 {
+		maxHeight = 1
+	}
+	return maxHeight
+}
+
+func (m *Model) hasPosterState() bool {
+	return m.posterRequestKey != "" || m.posterItemID != "" || m.posterContent != "" ||
+		m.posterPlacement != "" || m.posterImageID != 0
+}
+
+// clearPosterState removes the currently rendered Kitty image and clears the
+// displayed poster without invalidating the request generation.
+func (m *Model) clearPosterState() {
+	deleteKittyImage(m.posterOutput, m.posterImageID)
+	m.posterItemID = ""
+	m.posterContent = ""
+	m.posterPlacement = ""
+	m.posterImageID = 0
+}
+
+// invalidatePoster makes every in-flight poster result stale.
+func (m *Model) invalidatePoster() {
+	m.posterRequestID++
+	m.posterRequestKey = ""
+	m.clearPosterState()
+}
+
+// getSelectedItemID returns the ID of the selected item in a column
+func (m Model) getSelectedItemID(c *components.ListColumn) string {
+	if c == nil {
+		return ""
+	}
+	item, ok := c.SelectedItem().(domain.ListItem)
+	if !ok {
+		return ""
+	}
+	return item.GetID()
 }

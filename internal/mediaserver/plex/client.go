@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/SuperCoolPencil/cue/internal/domain"
+	"github.com/SuperCoolPencil/cue/internal/mediaserver/mediahttp"
 )
 
 const (
@@ -205,6 +206,29 @@ func truncateForLog(body []byte) string {
 		return string(body[:max]) + "...(truncated)"
 	}
 	return string(body)
+}
+
+// GetImage downloads raw image bytes from an absolute URL, authenticating with the
+// Plex token. Used to render posters as ASCII art or terminal images.
+func (c *Client) GetImage(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create image request: %w", err)
+	}
+	req.Header.Set("X-Plex-Token", c.token)
+	req.Header.Set("X-Plex-Client-Identifier", c.clientID)
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, domain.ErrServerOffline
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("image request failed: status %d", resp.StatusCode)
+	}
+	return mediahttp.ReadImage(resp)
 }
 
 // parseResponse parses a JSON response into APIResponse

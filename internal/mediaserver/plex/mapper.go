@@ -68,10 +68,13 @@ func mapMovie(m Metadata, serverURL string) domain.MediaItem {
 	}
 
 	if m.Thumb != "" {
-		item.ThumbURL = serverURL + m.Thumb
+		item.ThumbURL = plexMediaURL(serverURL, m.Thumb)
 	}
 	if m.Art != "" {
-		item.ArtURL = serverURL + m.Art
+		item.ArtURL = plexMediaURL(serverURL, m.Art)
+	}
+	if m.GrandparentThumb != "" {
+		item.ShowThumbURL = plexMediaURL(serverURL, m.GrandparentThumb)
 	}
 
 	item.ContentRating = normalizeContentRating(m.ContentRating)
@@ -132,10 +135,10 @@ func mapShow(m Metadata, serverURL string) domain.Show {
 	}
 
 	if m.Thumb != "" {
-		show.ThumbURL = serverURL + m.Thumb
+		show.ThumbURL = plexMediaURL(serverURL, m.Thumb)
 	}
 	if m.Art != "" {
-		show.ArtURL = serverURL + m.Art
+		show.ArtURL = plexMediaURL(serverURL, m.Art)
 	}
 
 	show.ContentRating = normalizeContentRating(m.ContentRating)
@@ -169,7 +172,7 @@ func mapSeason(m Metadata, serverURL string) domain.Season {
 	}
 
 	if m.Thumb != "" {
-		season.ThumbURL = serverURL + m.Thumb
+		season.ThumbURL = plexMediaURL(serverURL, m.Thumb)
 	}
 
 	return season
@@ -222,10 +225,13 @@ func mapEpisode(m Metadata, serverURL string) domain.MediaItem {
 	}
 
 	if m.Thumb != "" {
-		item.ThumbURL = serverURL + m.Thumb
+		item.ThumbURL = plexMediaURL(serverURL, m.Thumb)
 	}
 	if m.Art != "" {
-		item.ArtURL = serverURL + m.Art
+		item.ArtURL = plexMediaURL(serverURL, m.Art)
+	}
+	if m.GrandparentThumb != "" {
+		item.ShowThumbURL = plexMediaURL(serverURL, m.GrandparentThumb)
 	}
 
 	item.ContentRating = normalizeContentRating(m.ContentRating)
@@ -244,6 +250,17 @@ func mapEpisode(m Metadata, serverURL string) domain.MediaItem {
 	}
 
 	return item
+}
+
+// plexMediaURL normalizes Plex image paths while preserving absolute URLs.
+func plexMediaURL(serverURL, path string) string {
+	if path == "" {
+		return ""
+	}
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	return strings.TrimRight(serverURL, "/") + "/" + strings.TrimLeft(path, "/")
 }
 
 // MapVideoItems converts Plex metadata to playable domain media items

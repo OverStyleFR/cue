@@ -57,6 +57,10 @@ type MediaItem struct {
 	// Image URLs
 	ThumbURL string // Poster/thumbnail image URL
 	ArtURL   string // Background art URL
+
+	// ShowThumbURL is the series poster URL (for episodes, the parent show's
+	// poster). Used to display the series artwork in continue-watching/inspector.
+	ShowThumbURL string
 }
 
 // WatchStatus returns the watch status of the media item

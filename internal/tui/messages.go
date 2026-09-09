@@ -79,8 +79,8 @@ type PlaybackStartedMsg struct {
 
 // PlaybackStatusMsg signals a real-time status update during playback
 type PlaybackStatusMsg struct {
-	Message  string
-	StatusCh <-chan string
+	Status   player.PlaybackStatus
+	StatusCh <-chan player.PlaybackStatus
 }
 
 // PlaybackFinishedMsg signals that playback has ended
@@ -197,4 +197,14 @@ type QueueUpdatedMsg struct {
 // RefreshCurrentMsg triggers a refresh of the current view
 type RefreshCurrentMsg struct {
 	LibraryID string
+}
+
+// PosterLoadedMsg carries a rendered poster (ASCII art or kitty image escape
+// sequence) for the item whose ID is set.
+type PosterLoadedMsg struct {
+	RequestID uint64
+	ItemID    string
+	Content   string
+	Placement string // kitty placement escape; empty in ASCII mode
+	ImageID   uint32 // kitty image ID; zero in ASCII mode
 }

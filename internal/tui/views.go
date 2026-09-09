@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const posterPlacementMarker = "\x00"
+
 // RenderSpinner renders a loading spinner
 func RenderSpinner(frame int) string {
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -84,11 +86,10 @@ func (m Model) View() string {
 			}
 
 		case 2:
-			// Tab 1: library list (full height)
+			// Tab 1: library list and artwork preview
 			// Tab 2: content column (split 33/66 or full)
 			libCol := m.ColumnStack.Get(0)
-			libCol.SetSize(layout.parentWidth, contentHeight)
-			columnViews = append(columnViews, libCol.View())
+			columnViews = append(columnViews, m.renderLibraryColumn(libCol, layout.parentWidth, contentHeight))
 
 			contentCol := m.ColumnStack.Get(1)
 			if canSplit {
@@ -99,16 +100,15 @@ func (m Model) View() string {
 			}
 
 		default:
-			// Tab 1: library list (full height)
+			// Tab 1: library list and artwork preview
 			// Tab 2: shows/movies column (full height if 3-col visible, else split)
 			// Tab 3: episodes/season-episodes column (split)
 			libCol := m.ColumnStack.Get(topIdx - 2)
+			libWidth := layout.parentWidth
 			if layout.grandparentWidth > 0 {
-				libCol.SetSize(layout.grandparentWidth, contentHeight)
-			} else {
-				libCol.SetSize(layout.parentWidth, contentHeight)
+				libWidth = layout.grandparentWidth
 			}
-			columnViews = append(columnViews, libCol.View())
+			columnViews = append(columnViews, m.renderLibraryColumn(libCol, libWidth, contentHeight))
 
 			parentCol := m.ColumnStack.Get(topIdx - 1)
 			if canSplit {
@@ -173,7 +173,54 @@ func (m Model) View() string {
 			m.InputModal.View())
 	}
 
+	// Insert Kitty's non-printing placement at the preview itself only after
+	// every layout calculation. Keeping it off the first screen line prevents
+	// image changes from disturbing Bubble Tea's top-of-screen cursor diff.
+	view = strings.Replace(view, posterPlacementMarker, m.posterPlacement, 1)
 	return view
+}
+
+// renderLibraryColumn uses the otherwise empty lower half of the library
+// column for artwork, leaving inspectors dedicated to readable text.
+func (m Model) renderLibraryColumn(libCol *components.ListColumn, width, height int) string {
+	if height < 16 {
+		libCol.SetSize(width, height)
+		return libCol.View()
+	}
+
+	listHeight := height / 2
+	previewHeight := height - listHeight
+	libCol.SetSize(width, listHeight)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		libCol.View(),
+		m.renderPosterPreview(width, previewHeight),
+	)
+}
+
+func (m Model) renderPosterPreview(width, height int) string {
+	frameW, frameH := styles.InactiveBorder.GetFrameSize()
+	contentWidth := max(1, width-frameW-1)
+	contentHeight := max(1, height-frameH)
+
+	poster := ""
+	if m.posterContent != "" {
+		// Keep the Kitty placement command out of Lip Gloss measurement. APC
+		// escape sequences are not printable cells, but treating one as content
+		// can widen/tall the entire application when the image arrives.
+		poster = posterPlacementMarker + m.posterContent
+	}
+	if poster == "" {
+		poster = styles.DimStyle.Render("No preview available")
+	}
+
+	title := styles.AccentStyle.Render(styles.Truncate("Preview", contentWidth))
+	bodyHeight := max(1, contentHeight-2)
+	body := lipgloss.Place(contentWidth, bodyHeight, lipgloss.Center, lipgloss.Center, poster)
+	rendered := styles.InactiveBorder.
+		Width(width - frameW).
+		Height(contentHeight).
+		Render(styles.InsetLeft(title + "\n\n" + body))
+	return rendered
 }
 
 // renderSplitColumn renders a content column as a vertical split:
@@ -244,7 +291,7 @@ func (m Model) renderFooter() string {
 		frames := []string{"▶", "▷"}
 		icon := styles.AccentStyle.Render(frames[m.SpinnerFrame/5%len(frames)])
 		title := styles.Truncate(m.isPlayingTitle, 40)
-		left = icon + " " + styles.DimStyle.Render("Now Playing: "+title)
+		left = icon + " " + styles.DimStyle.Render("Playing: "+title)
 	} else if m.Loading {
 		statusText := "Loading..."
 

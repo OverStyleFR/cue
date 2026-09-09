@@ -29,6 +29,10 @@ type MediaSource interface {
 
 	// GetNextUp returns the next unwatched episode for a show.
 	GetNextUp(ctx context.Context, showID string) (*domain.MediaItem, error)
+
+	// GetImage fetches raw image bytes (poster/artwork) from an absolute URL,
+	// authenticated against the media server. Used for ASCII/terminal image rendering.
+	GetImage(ctx context.Context, url string) ([]byte, error)
 }
 
 // NewClient creates a new MediaSource based on the server type.

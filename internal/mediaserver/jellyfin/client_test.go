@@ -164,7 +164,10 @@ func TestRemoveFromPlaylistUsesEntryID(t *testing.T) {
 func TestDeviceIDInAuthHeader(t *testing.T) {
 	var header string
 	c := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header = r.Header.Get("X-Emby-Authorization")
+		header = r.Header.Get("Authorization")
+		if legacy := r.Header.Get("X-Emby-Authorization"); legacy != "" {
+			t.Errorf("deprecated X-Emby-Authorization header was sent: %q", legacy)
+		}
 		if _, err := w.Write([]byte(`{"Items":[],"TotalRecordCount":0}`)); err != nil {
 			t.Fatal(err)
 		}

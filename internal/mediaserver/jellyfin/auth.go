@@ -114,7 +114,7 @@ func (f *AuthFlow) authenticate(ctx context.Context, serverURL, username, passwo
 
 	// Set required headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Emby-Authorization", buildAuthHeader("", f.deviceID)) // No token yet
+	req.Header.Set("Authorization", buildAuthHeader("", f.deviceID)) // No token yet
 
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
@@ -149,7 +149,7 @@ func (f *AuthFlow) authenticate(ctx context.Context, serverURL, username, passwo
 	}, nil
 }
 
-// buildAuthHeader constructs the X-Emby-Authorization header.
+// buildAuthHeader constructs Jellyfin's MediaBrowser Authorization header.
 // The device ID must be unique per install: Jellyfin revokes existing
 // tokens when a new login reuses the same device ID, so a shared static
 // ID causes intermittent token invalidation across installs.
