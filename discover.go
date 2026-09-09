@@ -229,7 +229,7 @@ func promptServerSelection(stdout, stderr io.Writer, servers []mediaserver.Disco
 	_, _ = fmt.Fprint(stdout, "Select a server connection [1]: ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
-	if err != nil && !(err == io.EOF && line != "") {
+	if err != nil && (err != io.EOF || line == "") {
 		_, _ = fmt.Fprintln(stderr, "Error: failed to read selection.")
 		return -1
 	}
