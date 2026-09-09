@@ -25,21 +25,21 @@ type PlexResourceConnection struct {
 
 // PlexResource represents a device returned by the plex.tv resources endpoint.
 type PlexResource struct {
-	Name               string                   `json:"name"`
-	ClientIdentifier   string                   `json:"clientIdentifier"`
-	Provides           string                   `json:"provides"`
-	Product            string                   `json:"product"`
-	ProductVersion     string                   `json:"productVersion"`
-	Platform           string                   `json:"platform"`
-	AccessToken         string                  `json:"accessToken"`
-	Owned              bool                     `json:"owned"`
-	Home               bool                     `json:"home"`
-	Presence           bool                     `json:"presence"`
-	HTTPSRequired      bool                     `json:"httpsRequired"`
-	PublicAddress      string                   `json:"publicAddress"`
-	PublicAddressMatches bool                   `json:"publicAddressMatches"`
-	Relay              bool                     `json:"relay"`
-	Connections        []PlexResourceConnection `json:"connections"`
+	Name                 string                   `json:"name"`
+	ClientIdentifier     string                   `json:"clientIdentifier"`
+	Provides             string                   `json:"provides"`
+	Product              string                   `json:"product"`
+	ProductVersion       string                   `json:"productVersion"`
+	Platform             string                   `json:"platform"`
+	AccessToken          string                   `json:"accessToken"`
+	Owned                bool                     `json:"owned"`
+	Home                 bool                     `json:"home"`
+	Presence             bool                     `json:"presence"`
+	HTTPSRequired        bool                     `json:"httpsRequired"`
+	PublicAddress        string                   `json:"publicAddress"`
+	PublicAddressMatches bool                     `json:"publicAddressMatches"`
+	Relay                bool                     `json:"relay"`
+	Connections          []PlexResourceConnection `json:"connections"`
 }
 
 // DiscoverServers queries plex.tv for the servers reachable by the Plex account
@@ -57,13 +57,13 @@ func DiscoverServers(ctx context.Context, token, clientID string) ([]PlexResourc
 	q.Set("includeHttps", "1")
 	q.Set("includeIPv6", "1")
 	q.Set("includeRelay", "1")
-	q.Set("X-Plex-Token", token)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Plex-Token", token)
 	req.Header.Set("X-Plex-Client-Identifier", clientID)
 	req.Header.Set("X-Plex-Product", "Cue")
 	req.Header.Set("X-Plex-Version", "1.0")

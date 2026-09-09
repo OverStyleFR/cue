@@ -346,6 +346,9 @@ func runSetupFlow(cfg *config.Config, logger *slog.Logger) error {
 
 	// Save credentials
 	cfg.Server.Token = result.Token
+	if serverType == config.SourceTypePlex {
+		cfg.Server.PlexAccountToken = result.Token
+	}
 	cfg.Server.UserID = result.UserID
 	cfg.Server.Username = result.Username
 

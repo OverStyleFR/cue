@@ -13,12 +13,12 @@ import (
 // plex.tv. A single Plex Media Server may expose multiple connections (local
 // and remote); each is exposed as its own option, matching plexctl's behavior.
 type DiscoveredServer struct {
-	Name   string
-	ID     string
-	Token  string
-	URI    string
-	Local  bool
-	Owned  bool
+	Name  string
+	ID    string
+	Token string
+	URI   string
+	Local bool
+	Owned bool
 }
 
 // DiscoverPlexServers returns all non-relay Plex server connections reachable by
@@ -27,11 +27,17 @@ func DiscoverPlexServers(ctx context.Context, cfg *config.Config) ([]DiscoveredS
 	if cfg.Server.Type != config.SourceTypePlex {
 		return nil, fmt.Errorf("server discovery is only supported for Plex")
 	}
-	if cfg.Server.Token == "" {
+	discoveryToken := cfg.Server.PlexAccountToken
+	if discoveryToken == "" {
+		// Backward compatibility for configs created before the account token
+		// was stored separately from the active server's token.
+		discoveryToken = cfg.Server.Token
+	}
+	if discoveryToken == "" {
 		return nil, fmt.Errorf("no Plex token configured; run cue to set up your server first")
 	}
 
-	resources, err := plex.DiscoverServers(ctx, cfg.Server.Token, cfg.Server.DeviceID)
+	resources, err := plex.DiscoverServers(ctx, discoveryToken, cfg.Server.DeviceID)
 	if err != nil {
 		return nil, err
 	}

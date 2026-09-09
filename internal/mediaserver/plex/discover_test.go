@@ -43,8 +43,11 @@ func TestDiscoverServers(t *testing.T) {
 	]`
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("X-Plex-Token"); got != "account-token" {
-			t.Errorf("expected X-Plex-Token query param, got %q", got)
+		if got := r.Header.Get("X-Plex-Token"); got != "account-token" {
+			t.Errorf("expected X-Plex-Token header, got %q", got)
+		}
+		if got := r.URL.Query().Get("X-Plex-Token"); got != "" {
+			t.Errorf("token must not be exposed in query string, got %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(sample))

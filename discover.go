@@ -76,10 +76,11 @@ func runDiscover(args []string, stdout, stderr io.Writer) int {
 	} else {
 		if term.IsTerminal(int(os.Stdin.Fd())) {
 			chosen, err = selectPlexctlStyle(servers, stdout)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "Error: failed to select server: %v\n", err)
+				return 1
+			}
 		} else {
-			chosen, err = -1, nil
-		}
-		if err != nil || chosen < 0 {
 			chosen = promptServerSelection(stdout, stderr, servers)
 		}
 		if chosen < 0 {
@@ -89,6 +90,9 @@ func runDiscover(args []string, stdout, stderr io.Writer) int {
 	}
 
 	sel := servers[chosen]
+	if cfg.Server.PlexAccountToken == "" {
+		cfg.Server.PlexAccountToken = cfg.Server.Token
+	}
 	cfg.Server.URL = sel.URI
 	if sel.Token != "" {
 		cfg.Server.Token = sel.Token
@@ -193,7 +197,7 @@ func selectPlexctlStyle(servers []mediaserver.DiscoveredServer, stdout io.Writer
 	l.SetFilteringEnabled(false)
 	l.Styles.Title = plexctlTitleStyle
 
-	m := plexctlSelectorModel{list: l}
+	m := plexctlSelectorModel{list: l, choice: -1}
 	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(stdout))
 	finalModel, err := p.Run()
 	if err != nil {
@@ -225,7 +229,7 @@ func promptServerSelection(stdout, stderr io.Writer, servers []mediaserver.Disco
 	_, _ = fmt.Fprint(stdout, "Select a server connection [1]: ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
-	if err != nil {
+	if err != nil && !(err == io.EOF && line != "") {
 		_, _ = fmt.Fprintln(stderr, "Error: failed to read selection.")
 		return -1
 	}
