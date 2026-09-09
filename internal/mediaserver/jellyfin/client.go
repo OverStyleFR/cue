@@ -103,7 +103,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("X-Emby-Authorization", buildAuthHeader(c.token, c.deviceID))
+		req.Header.Set("Authorization", buildAuthHeader(c.token, c.deviceID))
 		if bodyBytes != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
@@ -169,7 +169,7 @@ func (c *Client) GetImage(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create image request: %w", err)
 	}
-	req.Header.Set("X-Emby-Authorization", buildAuthHeader(c.token, c.deviceID))
+	req.Header.Set("Authorization", buildAuthHeader(c.token, c.deviceID))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
